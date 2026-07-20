@@ -1,24 +1,27 @@
-FROM golang:1.22-alpine AS backend-build
+FROM golang:1.25-alpine AS backend-build
 
 WORKDIR /app
 COPY go.mod ./
+COPY go.sum ./
 COPY cmd ./cmd
 COPY internal ./internal
 
 RUN go build -o /out/harborx ./cmd/server
+RUN go build -o /out/harborx-agent ./cmd/agent
 
 FROM node:22-alpine AS frontend-build
 
 WORKDIR /web
-COPY web/package.json web/tsconfig.json web/tsconfig.node.json web/vite.config.ts web/index.html ./
+COPY web/package.json web/package-lock.json web/tsconfig.json web/tsconfig.node.json web/vite.config.ts web/index.html ./
 COPY web/src ./src
 
-RUN npm install && npm run build
+RUN npm ci && npm run build
 
 FROM alpine:3.21
 
 WORKDIR /app
 COPY --from=backend-build /out/harborx /app/harborx
+COPY --from=backend-build /out/harborx-agent /app/harborx-agent
 COPY --from=frontend-build /web/dist /app/web-dist
 COPY templates /app/templates
 COPY internal/storage/schema.sql /app/schema.sql

@@ -929,7 +929,32 @@ func NewRouter(deps Dependencies) http.Handler {
 	})
 
 	mux.HandleFunc("/api/v1/notifications/channels/", func(w http.ResponseWriter, r *http.Request) {
-		id := strings.TrimPrefix(r.URL.Path, "/api/v1/notifications/channels/")
+		path := strings.TrimPrefix(r.URL.Path, "/api/v1/notifications/channels/")
+		parts := strings.Split(strings.Trim(path, "/"), "/")
+		if len(parts) == 2 && parts[1] == "test" {
+			if r.Method != http.MethodPost {
+				writeMethodNotAllowed(w, http.MethodPost)
+				return
+			}
+			if !requireAuth(w, r, deps) {
+				return
+			}
+			var input struct {
+				Message string `json:"message"`
+			}
+			if err := decodeJSON(r, &input); err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			if err := deps.Notifications.TestChannel(parts[0], input.Message); err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+			return
+		}
+
+		id := strings.TrimSpace(path)
 		if id == "" {
 			writeError(w, http.StatusBadRequest, errors.New("notification channel id is required"))
 			return
@@ -995,6 +1020,27 @@ func NewRouter(deps Dependencies) http.Handler {
 		default:
 			writeMethodNotAllowed(w, http.MethodGet, http.MethodPost)
 		}
+	})
+
+	mux.HandleFunc("/api/v1/backups/export", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeMethodNotAllowed(w, http.MethodPost)
+			return
+		}
+		if !requireAuth(w, r, deps) {
+			return
+		}
+		var input backups.ExportInput
+		if err := decodeJSON(r, &input); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		item, err := deps.Backups.ExportDatabase(input)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		writeJSON(w, http.StatusCreated, item)
 	})
 
 	mux.HandleFunc("/api/v1/backups/", func(w http.ResponseWriter, r *http.Request) {

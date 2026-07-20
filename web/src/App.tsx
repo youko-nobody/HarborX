@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useState, type FormEvent, type ReactNode } from "react";
 import {
   listRemoteTasks,
   previewSubscription,
@@ -71,7 +71,8 @@ export function App() {
     deleteCertificate,
     createNotificationChannel,
     deleteNotificationChannel,
-    createBackup,
+    testNotificationChannel,
+    exportBackup,
     deleteBackup,
     upsertSystemSetting,
     deleteSystemSetting,
@@ -432,10 +433,9 @@ export function App() {
   async function handleCreateBackup(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     await runOps(() =>
-      createBackup({
-        backupKind: "manual",
-        filePath: backupPath,
-        summary: "Manual backup marker created from the HarborX console.",
+      exportBackup({
+        backupKind: "database",
+        summary: "Exported from the HarborX console.",
       }),
     );
   }
@@ -1196,35 +1196,48 @@ export function App() {
             />
           </article>
 
-          <article className="panel">
-            <p className="eyebrow">Notifications</p>
-            <h3>Alert channels</h3>
-            <form className="stack-form" onSubmit={(event) => void handleCreateNotification(event)}>
-              <input value={notificationName} onChange={(event) => setNotificationName(event.target.value)} />
-              <textarea value={notificationConfig} onChange={(event) => setNotificationConfig(event.target.value)} />
-              <button type="submit">Create channel</button>
-            </form>
-            <MiniList
-              items={notificationChannels.map((item) => ({
-                id: item.id,
-                title: item.name,
-                subtitle: `${item.channelKind} ${item.enabled ? "enabled" : "disabled"}`,
-              }))}
-              onDelete={(id) => void runOps(() => deleteNotificationChannel(id))}
-            />
-          </article>
+            <article className="panel">
+              <p className="eyebrow">Notifications</p>
+              <h3>Alert channels</h3>
+              <form className="stack-form" onSubmit={(event) => void handleCreateNotification(event)}>
+                <input value={notificationName} onChange={(event) => setNotificationName(event.target.value)} />
+                <textarea value={notificationConfig} onChange={(event) => setNotificationConfig(event.target.value)} />
+                <button type="submit">Create channel</button>
+              </form>
+              <MiniList
+                items={notificationChannels.map((item) => ({
+                  id: item.id,
+                  title: item.name,
+                  subtitle: `${item.channelKind} ${item.enabled ? "enabled" : "disabled"}`,
+                }))}
+                onDelete={(id) => void runOps(() => deleteNotificationChannel(id))}
+                renderActions={(item) => (
+                  <button
+                    type="button"
+                    className="ghost-button"
+                    onClick={() => void runOps(() => testNotificationChannel(item.id, { message: "HarborX test notification" }))}
+                  >
+                    Test
+                  </button>
+                )}
+              />
+            </article>
 
-          <article className="panel">
-            <p className="eyebrow">Backups</p>
-            <h3>Backup ledger</h3>
-            <form className="stack-form" onSubmit={(event) => void handleCreateBackup(event)}>
-              <input value={backupPath} onChange={(event) => setBackupPath(event.target.value)} />
-              <button type="submit">Record backup</button>
-            </form>
-            <MiniList
-              items={backups.map((item) => ({ id: item.id, title: item.backupKind, subtitle: item.filePath }))}
-              onDelete={(id) => void runOps(() => deleteBackup(id))}
-            />
+            <article className="panel">
+              <p className="eyebrow">Backups</p>
+              <h3>Backup ledger</h3>
+              <form className="stack-form" onSubmit={(event) => void handleCreateBackup(event)}>
+                <input
+                  value={backupPath}
+                  onChange={(event) => setBackupPath(event.target.value)}
+                  placeholder="Export path is generated automatically"
+                />
+                <button type="submit">Export database</button>
+              </form>
+              <MiniList
+                items={backups.map((item) => ({ id: item.id, title: item.backupKind, subtitle: item.filePath }))}
+                onDelete={(id) => void runOps(() => deleteBackup(id))}
+              />
           </article>
 
           <article className="panel">
@@ -1302,9 +1315,11 @@ export function App() {
 function MiniList({
   items,
   onDelete,
+  renderActions,
 }: {
   items: Array<{ id: string; title: string; subtitle: string }>;
   onDelete?: (id: string) => void;
+  renderActions?: (item: { id: string; title: string; subtitle: string }) => ReactNode;
 }) {
   if (items.length === 0) {
     return <p className="status mini-empty">No records yet.</p>;
@@ -1313,18 +1328,21 @@ function MiniList({
     <div className="mini-list">
       {items.map((item) => (
         <div className="mini-row" key={item.id}>
-          <div>
-            <strong>{item.title}</strong>
-            <span>{item.subtitle}</span>
+            <div>
+              <strong>{item.title}</strong>
+              <span>{item.subtitle}</span>
+            </div>
+            <div className="mini-actions">
+              {renderActions ? renderActions(item) : null}
+              {onDelete ? (
+                <button type="button" className="ghost-button" onClick={() => onDelete(item.id)}>
+                  Delete
+                </button>
+              ) : null}
+            </div>
           </div>
-          {onDelete ? (
-            <button type="button" className="ghost-button" onClick={() => onDelete(item.id)}>
-              Delete
-            </button>
-          ) : null}
-        </div>
-      ))}
-    </div>
+        ))}
+      </div>
   );
 }
 

@@ -544,6 +544,13 @@ textarea {
   border: 1px solid var(--line);
 }
 
+.mini-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 .mini-row div {
   display: grid;
   gap: 4px;

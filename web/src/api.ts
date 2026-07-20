@@ -642,8 +642,22 @@ export function deleteNotificationChannel(id: string) {
   });
 }
 
+export function testNotificationChannel(id: string, input: { message: string }) {
+  return fetchJSON<{ ok: boolean }>(`/api/v1/notifications/channels/${id}/test`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
 export function createBackup(input: { backupKind: string; filePath: string; summary: string }) {
   return fetchJSON<BackupRecord>("/api/v1/backups", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function exportBackup(input: { backupKind: string; summary: string }) {
+  return fetchJSON<BackupRecord>("/api/v1/backups/export", {
     method: "POST",
     body: JSON.stringify(input),
   });

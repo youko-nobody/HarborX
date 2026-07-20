@@ -41,6 +41,24 @@ This project is being built as a full self-hosted control plane and already incl
 - No `pro` feature checks
 - No paid gating or entitlement logic
 
+## VPS One-Click Deploy
+
+On a fresh VPS, run:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/youko-nobody/HarborX/main/scripts/deploy-vps.sh | sudo bash
+```
+
+Optional environment variables:
+
+```bash
+export HARBORX_PORT=18080
+export HARBORX_ADMIN_PASSWORD="replace-with-a-strong-password"
+export HARBORX_INSTALL_DIR=/opt/harborx
+```
+
+The script installs Docker, pulls this repository, writes `.env`, builds the image, and starts HarborX with Docker Compose.
+
 ## Agent Quick Start
 
 Register a remote server in the HarborX console and copy the one-time agent token.
@@ -49,7 +67,7 @@ Register a remote server in the HarborX console and copy the one-time agent toke
 export HARBORX_AGENT_BASE_URL="https://your-harborx.example.com"
 export HARBORX_AGENT_TOKEN="hxa_..."
 export HARBORX_AGENT_INTERVAL_SECONDS=10
-go run ./cmd/agent
+curl -fsSL https://raw.githubusercontent.com/youko-nobody/HarborX/main/scripts/install-agent.sh | sudo -E bash
 ```
 
 `shell-script` tasks are disabled by default. Enable them only on servers you control:
@@ -66,6 +84,8 @@ export HARBORX_AGENT_ALLOW_SHELL=1
 - Subscription rendering for Clash-like and sing-box templates
 - Xray configuration preview from saved nodes and rules
 - Remote server enrollment tokens, task queues, and agent heartbeat/task APIs
+- Database backup export with SQLite `VACUUM INTO`
+- Telegram and webhook notification test delivery
 - React operator console with live bootstrap loading and no license/pro gating
 
 ## Current API Slice
@@ -84,6 +104,8 @@ export HARBORX_AGENT_ALLOW_SHELL=1
 - `POST /api/v1/agent/heartbeat`
 - `POST /api/v1/agent/tasks/claim`
 - `POST /api/v1/agent/tasks/{id}`
+- `POST /api/v1/backups/export`
+- `POST /api/v1/notifications/channels/{id}/test`
 - Summary and bootstrap endpoints for all feature domains
 
 ## Next Steps

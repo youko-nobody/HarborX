@@ -25,7 +25,9 @@ import {
   deleteSubscription,
   deleteTemplate,
   deleteUser,
+  exportBackup,
   loadWorkspace,
+  testNotificationChannel,
   updateNode,
   updateRemoteServer,
   updateRuleSet,
@@ -120,7 +122,10 @@ export function useWorkspaceData() {
     createNotificationChannel: (input: Parameters<typeof createNotificationChannel>[0]) =>
       runMutation(() => createNotificationChannel(input)),
     deleteNotificationChannel: (id: string) => runMutation(() => deleteNotificationChannel(id)),
+    testNotificationChannel: (id: string, input: Parameters<typeof testNotificationChannel>[1]) =>
+      runMutation(() => testNotificationChannel(id, input)),
     createBackup: (input: Parameters<typeof createBackup>[0]) => runMutation(() => createBackup(input)),
+    exportBackup: (input: Parameters<typeof exportBackup>[0]) => runMutation(() => exportBackup(input)),
     deleteBackup: (id: string) => runMutation(() => deleteBackup(id)),
     upsertSystemSetting: (key: string, input: Parameters<typeof upsertSystemSetting>[1]) =>
       runMutation(() => upsertSystemSetting(key, input)),

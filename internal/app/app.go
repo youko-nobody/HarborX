@@ -52,7 +52,7 @@ func New() (App, error) {
 	certificatesService := certificates.NewService(store)
 	dnsService := dns.NewService(store)
 	notificationsService := notifications.NewService(store)
-	backupsService := backups.NewService(store)
+	backupsService := backups.NewService(store, cfg.DataDir)
 	systemService := system.NewService(store)
 
 	router := httpapi.NewRouter(httpapi.Dependencies{

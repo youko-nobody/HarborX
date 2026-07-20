@@ -10,7 +10,7 @@ services:
     ports:
       - "18080:18080"
     env_file:
-      - .env.example
+      - .env
     environment:
       HARBORX_DATA_DIR: /app/data
       HARBORX_DB_PATH: /app/data/harborx.sqlite

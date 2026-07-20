@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -1715,6 +1716,10 @@ func (s *SQLiteStore) DeleteNotificationChannel(id string) error {
 	return nil
 }
 
+func (s *SQLiteStore) FindNotificationChannel(id string) (notifications.Channel, error) {
+	return s.findNotificationChannel(id)
+}
+
 func (s *SQLiteStore) findNotificationChannel(id string) (notifications.Channel, error) {
 	var item notifications.Channel
 	var configJSON string
@@ -1773,6 +1778,19 @@ func (s *SQLiteStore) CreateBackup(input backups.CreateInput) (backups.Backup, e
 		return backups.Backup{}, err
 	}
 	return item, nil
+}
+
+func (s *SQLiteStore) ExportDatabaseBackup(filePath string) error {
+	if strings.TrimSpace(filePath) == "" {
+		return errors.New("backup file path is required")
+	}
+	if err := os.MkdirAll(filepath.Dir(filePath), 0o755); err != nil {
+		return fmt.Errorf("create backup directory: %w", err)
+	}
+	if _, err := s.db.Exec(`VACUUM INTO ?`, filePath); err != nil {
+		return fmt.Errorf("export sqlite backup: %w", err)
+	}
+	return nil
 }
 
 func (s *SQLiteStore) DeleteBackup(id string) error {
