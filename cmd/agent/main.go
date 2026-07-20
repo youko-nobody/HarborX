@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -134,13 +135,19 @@ func runTask(cfg agentConfig, task remoteTask) (string, error) {
 	case "restart-xray":
 		return runCommand(60*time.Second, "systemctl", "restart", "xray")
 	case "reload-config":
+		if configText, _ := task.Payload["config"].(string); strings.TrimSpace(configText) != "" {
+			if err := writeXrayConfig(configText); err != nil {
+				return "", err
+			}
+			return runCommand(60*time.Second, "systemctl", "restart", "xray")
+		}
 		return runCommand(60*time.Second, "systemctl", "reload", "xray")
 	case "install-nginx":
-		return runCommand(5*time.Minute, "sh", "-lc", "command -v nginx >/dev/null || (apt-get update && apt-get install -y nginx)")
+		return runCommand(5*time.Minute, "sh", "-lc", packageInstallCommand("nginx"))
 	case "install-warp":
-		return "", errors.New("install-warp executor is not configured yet")
+		return runCommand(10*time.Minute, "sh", "-lc", "curl -fsSL https://raw.githubusercontent.com/fscarmen/warp/main/menu.sh -o /tmp/warp-menu.sh && bash /tmp/warp-menu.sh")
 	case "install-xray":
-		return "", errors.New("install-xray executor is not configured yet")
+		return runCommand(10*time.Minute, "sh", "-lc", "bash -c \"$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)\" @ install")
 	case "renew-certificate":
 		return runCommand(5*time.Minute, "sh", "-lc", "command -v certbot >/dev/null && certbot renew --quiet")
 	case "shell-script":
@@ -155,6 +162,25 @@ func runTask(cfg agentConfig, task remoteTask) (string, error) {
 	default:
 		return "", fmt.Errorf("unsupported task kind: %s", task.TaskKind)
 	}
+}
+
+func writeXrayConfig(configText string) error {
+	if !json.Valid([]byte(configText)) {
+		return errors.New("payload.config must be valid JSON")
+	}
+	configPath := "/usr/local/etc/xray/config.json"
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(configPath, []byte(configText), 0o600)
+}
+
+func packageInstallCommand(packageName string) string {
+	return fmt.Sprintf(`if command -v %s >/dev/null 2>&1; then exit 0; fi
+if command -v apt-get >/dev/null 2>&1; then apt-get update && apt-get install -y %s; exit $?; fi
+if command -v dnf >/dev/null 2>&1; then dnf install -y %s; exit $?; fi
+if command -v yum >/dev/null 2>&1; then yum install -y %s; exit $?; fi
+echo "unsupported package manager"; exit 1`, packageName, packageName, packageName, packageName)
 }
 
 func runCommand(timeout time.Duration, name string, args ...string) (string, error) {

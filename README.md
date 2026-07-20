@@ -82,8 +82,10 @@ export HARBORX_AGENT_ALLOW_SHELL=1
 - Admin login, API-token sessions, and protected mutation endpoints
 - CRUD endpoints for users, nodes, rule sets, templates, subscriptions, proxy groups, DNS providers, certificates, notifications, backups, system settings, traffic samples, and remote servers
 - Subscription rendering for Clash-like and sing-box templates
+- Share-link import for common `vmess://`, `vless://`, `trojan://`, and `ss://` node links
 - Xray configuration preview from saved nodes and rules
 - Remote server enrollment tokens, task queues, and agent heartbeat/task APIs
+- Agent executors for Xray restart/reload/install, Nginx install, certificate renewal, WARP script launch, and opt-in shell scripts
 - Database backup export with SQLite `VACUUM INTO`
 - Telegram and webhook notification test delivery
 - React operator console with live bootstrap loading and no license/pro gating
@@ -93,6 +95,7 @@ export HARBORX_AGENT_ALLOW_SHELL=1
 - `POST /api/v1/auth/login`
 - `GET/POST/PUT/DELETE /api/v1/users`
 - `GET/POST/PUT/DELETE /api/v1/nodes`
+- `POST /api/v1/nodes/import`
 - `GET/POST/PUT/DELETE /api/v1/rulesets`
 - `GET/POST/PUT/DELETE /api/v1/templates`
 - `GET/POST/PUT/DELETE /api/v1/subscriptions`

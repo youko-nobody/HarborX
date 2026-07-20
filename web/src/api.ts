@@ -52,6 +52,11 @@ export type NodeRecord = {
   updatedAt: string;
 };
 
+export type NodeImportResult = {
+  created: NodeRecord[];
+  skipped: string[];
+};
+
 export type RuleRecord = {
   id: string;
   ruleType: string;
@@ -375,6 +380,17 @@ export function createNode(input: {
   enabled: boolean;
 }) {
   return fetchJSON<NodeRecord>("/api/v1/nodes", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function importNodes(input: {
+  content: string;
+  sourceKind: string;
+  tags: string[];
+}) {
+  return fetchJSON<NodeImportResult>("/api/v1/nodes/import", {
     method: "POST",
     body: JSON.stringify(input),
   });

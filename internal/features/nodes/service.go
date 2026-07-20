@@ -27,6 +27,17 @@ type CreateInput struct {
 	Enabled    bool           `json:"enabled"`
 }
 
+type ImportInput struct {
+	Content    string   `json:"content"`
+	SourceKind string   `json:"sourceKind"`
+	Tags       []string `json:"tags"`
+}
+
+type ImportResult struct {
+	Created []Node   `json:"created"`
+	Skipped []string `json:"skipped"`
+}
+
 type Summary struct {
 	SupportedSources   []string `json:"supportedSources"`
 	SupportedProtocols []string `json:"supportedProtocols"`
@@ -68,6 +79,23 @@ func (s Service) Create(input CreateInput) (Node, error) {
 		return Node{}, errors.New("nodes repository is not configured")
 	}
 	return s.repo.CreateNode(input)
+}
+
+func (s Service) Import(input ImportInput) (ImportResult, error) {
+	if s.repo == nil {
+		return ImportResult{}, errors.New("nodes repository is not configured")
+	}
+	items, skipped := ParseShareLinks(input)
+	result := ImportResult{Skipped: skipped}
+	for _, item := range items {
+		created, err := s.repo.CreateNode(item)
+		if err != nil {
+			result.Skipped = append(result.Skipped, item.Name+": "+err.Error())
+			continue
+		}
+		result.Created = append(result.Created, created)
+	}
+	return result, nil
 }
 
 func (s Service) Delete(id string) error {

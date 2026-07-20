@@ -194,6 +194,27 @@ func NewRouter(deps Dependencies) http.Handler {
 		}
 	})
 
+	mux.HandleFunc("/api/v1/nodes/import", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeMethodNotAllowed(w, http.MethodPost)
+			return
+		}
+		if !requireAuth(w, r, deps) {
+			return
+		}
+		var input nodes.ImportInput
+		if err := decodeJSON(r, &input); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		result, err := deps.Nodes.Import(input)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		writeJSON(w, http.StatusCreated, result)
+	})
+
 	mux.HandleFunc("/api/v1/nodes/", func(w http.ResponseWriter, r *http.Request) {
 		id := strings.TrimPrefix(r.URL.Path, "/api/v1/nodes/")
 		if id == "" {

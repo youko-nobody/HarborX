@@ -50,6 +50,7 @@ export function App() {
     busy,
     refresh,
     createNode,
+    importNodes,
     updateNode,
     createRuleSet,
     updateRuleSet,
@@ -104,6 +105,8 @@ export function App() {
   const [nodePort, setNodePort] = useState("443");
   const [nodeProtocol, setNodeProtocol] = useState("vless");
   const [nodeTags, setNodeTags] = useState("");
+  const [nodeImportContent, setNodeImportContent] = useState("");
+  const [nodeImportStatus, setNodeImportStatus] = useState<string | null>(null);
 
   const [ruleSetName, setRuleSetName] = useState("Default Route Set");
   const [ruleSetDescription, setRuleSetDescription] = useState("Created from the HarborX operator console.");
@@ -201,6 +204,22 @@ export function App() {
     setNodeHost("");
     setNodePort("443");
     setNodeTags("");
+  }
+
+  async function handleImportNodes(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setNodeImportStatus(null);
+    try {
+      const result = await importNodes({
+        content: nodeImportContent,
+        sourceKind: "share-link-import",
+        tags: splitCSV(nodeTags),
+      });
+      setNodeImportStatus(`Imported ${result.created.length} nodes, skipped ${result.skipped.length}.`);
+      setNodeImportContent("");
+    } catch (error) {
+      setNodeImportStatus(error instanceof Error ? error.message : "Node import failed");
+    }
   }
 
   async function handleCreateRuleSet(event: FormEvent<HTMLFormElement>) {
@@ -837,6 +856,16 @@ export function App() {
                 onChange={(event) => setNodeTags(event.target.value)}
               />
               <button type="submit">Create node</button>
+            </form>
+
+            <form className="stack-form import-form" onSubmit={(event) => void handleImportNodes(event)}>
+              <textarea
+                placeholder="Paste vmess://, vless://, trojan://, or ss:// links here, one per line."
+                value={nodeImportContent}
+                onChange={(event) => setNodeImportContent(event.target.value)}
+              />
+              <button type="submit">Import share links</button>
+              {nodeImportStatus ? <p className="status">{nodeImportStatus}</p> : null}
             </form>
 
             <div className="entity-list">
