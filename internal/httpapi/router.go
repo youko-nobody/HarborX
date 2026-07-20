@@ -71,6 +71,24 @@ func NewRouter(deps Dependencies) http.Handler {
 		writeJSON(w, http.StatusOK, deps.Auth.Summary())
 	})
 
+	mux.HandleFunc("/api/v1/auth/login", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeMethodNotAllowed(w, http.MethodPost)
+			return
+		}
+		var input auth.LoginInput
+		if err := decodeJSON(r, &input); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		result, err := deps.Auth.Login(input)
+		if err != nil {
+			writeError(w, http.StatusUnauthorized, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
+	})
+
 	mux.HandleFunc("/api/v1/users/summary", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, deps.Users.Summary())
 	})
@@ -89,6 +107,9 @@ func NewRouter(deps Dependencies) http.Handler {
 			}
 			writeJSON(w, http.StatusOK, items)
 		case http.MethodPost:
+			if !requireAuth(w, r, deps) {
+				return
+			}
 			var input nodes.CreateInput
 			if err := decodeJSON(r, &input); err != nil {
 				writeError(w, http.StatusBadRequest, err)
@@ -108,6 +129,9 @@ func NewRouter(deps Dependencies) http.Handler {
 	mux.HandleFunc("/api/v1/nodes/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodDelete {
 			writeMethodNotAllowed(w, http.MethodDelete)
+			return
+		}
+		if !requireAuth(w, r, deps) {
 			return
 		}
 		id := strings.TrimPrefix(r.URL.Path, "/api/v1/nodes/")
@@ -136,6 +160,9 @@ func NewRouter(deps Dependencies) http.Handler {
 			}
 			writeJSON(w, http.StatusOK, items)
 		case http.MethodPost:
+			if !requireAuth(w, r, deps) {
+				return
+			}
 			var input subscriptions.CreateInput
 			if err := decodeJSON(r, &input); err != nil {
 				writeError(w, http.StatusBadRequest, err)
@@ -197,6 +224,9 @@ func NewRouter(deps Dependencies) http.Handler {
 			}
 			writeJSON(w, http.StatusOK, items)
 		case http.MethodPost:
+			if !requireAuth(w, r, deps) {
+				return
+			}
 			var input rules.CreateRuleSetInput
 			if err := decodeJSON(r, &input); err != nil {
 				writeError(w, http.StatusBadRequest, err)
@@ -234,6 +264,9 @@ func NewRouter(deps Dependencies) http.Handler {
 		}
 		switch r.Method {
 		case http.MethodPut:
+			if !requireAuth(w, r, deps) {
+				return
+			}
 			var input rules.CreateRuleSetInput
 			if err := decodeJSON(r, &input); err != nil {
 				writeError(w, http.StatusBadRequest, err)
@@ -246,6 +279,9 @@ func NewRouter(deps Dependencies) http.Handler {
 			}
 			writeJSON(w, http.StatusOK, item)
 		case http.MethodDelete:
+			if !requireAuth(w, r, deps) {
+				return
+			}
 			if err := deps.Rules.DeleteRuleSet(id); err != nil {
 				writeError(w, http.StatusBadRequest, err)
 				return
@@ -266,6 +302,9 @@ func NewRouter(deps Dependencies) http.Handler {
 			}
 			writeJSON(w, http.StatusOK, items)
 		case http.MethodPost:
+			if !requireAuth(w, r, deps) {
+				return
+			}
 			var input templates.CreateInput
 			if err := decodeJSON(r, &input); err != nil {
 				writeError(w, http.StatusBadRequest, err)
@@ -414,4 +453,12 @@ func decodeJSON(r *http.Request, target any) error {
 func writeMethodNotAllowed(w http.ResponseWriter, methods ...string) {
 	w.Header().Set("Allow", strings.Join(methods, ", "))
 	writeError(w, http.StatusMethodNotAllowed, errors.New("method not allowed"))
+}
+
+func requireAuth(w http.ResponseWriter, r *http.Request, deps Dependencies) bool {
+	if _, err := deps.Auth.AuthenticateBearer(r.Header.Get("Authorization")); err != nil {
+		writeError(w, http.StatusUnauthorized, err)
+		return false
+	}
+	return true
 }

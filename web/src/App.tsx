@@ -2,7 +2,11 @@ import { useState, type FormEvent } from "react";
 import {
   previewSubscription,
   previewXray,
+  getAuthToken,
+  login,
+  setAuthToken,
   subscriptionDownloadURL,
+  type AuthUser,
   validateRuleSet,
   type RenderedSubscription,
   type RuleRecord,
@@ -85,6 +89,30 @@ export function App() {
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [xrayPreview, setXrayPreview] = useState<XrayPreview | null>(null);
   const [xrayError, setXrayError] = useState<string | null>(null);
+  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
+  const [authUsername, setAuthUsername] = useState("admin");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authError, setAuthError] = useState<string | null>(null);
+
+  const isAuthenticated = Boolean(getAuthToken());
+
+  async function handleLogin(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setAuthError(null);
+    try {
+      const response = await login({ username: authUsername, password: authPassword });
+      setAuthToken(response.token);
+      setAuthUser(response.user);
+      setAuthPassword("");
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : "Login failed");
+    }
+  }
+
+  function handleLogout() {
+    setAuthToken("");
+    setAuthUser(null);
+  }
 
   async function handleCreateNode(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -267,8 +295,36 @@ export function App() {
             <span>No license module</span>
             <span>No pro checks</span>
             <span>Selfhost-first</span>
+            <span>{isAuthenticated ? "Authenticated" : "Read-only"}</span>
             {data ? <span>{data.dashboard.modulesTotal} modules</span> : null}
           </div>
+        </section>
+
+        <section className="panel auth-panel">
+          <div>
+            <p className="eyebrow">Access</p>
+            <h3>{isAuthenticated ? `Signed in as ${authUser?.username ?? "admin"}` : "Sign in to change data"}</h3>
+            <p>
+              Preview and download stay available, but create/update/delete actions require an admin session token.
+            </p>
+          </div>
+          {isAuthenticated ? (
+            <button type="button" className="ghost-button" onClick={handleLogout}>
+              Sign out
+            </button>
+          ) : (
+            <form className="auth-form" onSubmit={(event) => void handleLogin(event)}>
+              <input value={authUsername} onChange={(event) => setAuthUsername(event.target.value)} placeholder="username" />
+              <input
+                value={authPassword}
+                onChange={(event) => setAuthPassword(event.target.value)}
+                placeholder="password"
+                type="password"
+              />
+              <button type="submit">Sign in</button>
+              {authError ? <p className="status error">{authError}</p> : null}
+            </form>
+          )}
         </section>
 
         <section className="stats">

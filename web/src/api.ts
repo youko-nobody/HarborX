@@ -121,6 +121,19 @@ export type XrayPreview = {
   summary: string;
 };
 
+export type AuthUser = {
+  id: string;
+  username: string;
+  role: string;
+  status: string;
+  displayName: string;
+};
+
+export type LoginResponse = {
+  token: string;
+  user: AuthUser;
+};
+
 export type AppBootstrap = {
   modules: ModuleCard[];
   dashboard: DashboardSummary;
@@ -131,12 +144,31 @@ export type AppBootstrap = {
   subscriptions: SubscriptionRecord[];
 };
 
+let authToken = localStorage.getItem("harborx_token") ?? "";
+
+export function setAuthToken(token: string) {
+  authToken = token;
+  if (token) {
+    localStorage.setItem("harborx_token", token);
+  } else {
+    localStorage.removeItem("harborx_token");
+  }
+}
+
+export function getAuthToken() {
+  return authToken;
+}
+
 async function fetchJSON<T>(path: string, init?: RequestInit): Promise<T> {
+  const headers = new Headers(init?.headers);
+  headers.set("Content-Type", "application/json");
+  if (authToken) {
+    headers.set("Authorization", `Bearer ${authToken}`);
+  }
+
   const response = await fetch(path, {
-    headers: {
-      "Content-Type": "application/json",
-    },
     ...init,
+    headers,
   });
 
   if (!response.ok) {
@@ -157,6 +189,13 @@ async function fetchJSON<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   return response.json() as Promise<T>;
+}
+
+export function login(input: { username: string; password: string }) {
+  return fetchJSON<LoginResponse>("/api/v1/auth/login", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
 }
 
 export async function loadWorkspace(): Promise<AppBootstrap> {

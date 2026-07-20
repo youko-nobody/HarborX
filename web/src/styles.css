@@ -209,6 +209,24 @@ textarea {
   padding: 22px;
 }
 
+.auth-panel {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  align-items: center;
+}
+
+.auth-panel p {
+  color: var(--muted);
+}
+
+.auth-form {
+  display: grid;
+  grid-template-columns: minmax(120px, 180px) minmax(120px, 180px) auto;
+  gap: 10px;
+  align-items: start;
+}
+
 .panel button {
   border: 0;
   border-radius: 999px;

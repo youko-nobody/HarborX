@@ -13,6 +13,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"harborx/internal/config"
+	"harborx/internal/features/auth"
 	"harborx/internal/features/nodes"
 	"harborx/internal/features/rules"
 	"harborx/internal/features/subscriptions"
@@ -24,6 +25,57 @@ var migrationFiles embed.FS
 
 type SQLiteStore struct {
 	db *sql.DB
+}
+
+func (s *SQLiteStore) GetUserByUsername(username string) (auth.User, error) {
+	var user auth.User
+	err := s.db.QueryRow(`
+		SELECT id, username, password_hash, role, status, display_name
+		FROM users
+		WHERE username = ?
+	`, username).Scan(&user.ID, &user.Username, &user.PasswordHash, &user.Role, &user.Status, &user.DisplayName)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return auth.User{}, errors.New("user not found")
+		}
+		return auth.User{}, err
+	}
+	return user, nil
+}
+
+func (s *SQLiteStore) UpdateUserPasswordHash(userID string, passwordHash string) error {
+	_, err := s.db.Exec(`UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?`, passwordHash, time.Now().UTC().Format(time.RFC3339), userID)
+	return err
+}
+
+func (s *SQLiteStore) CreateAPIToken(userID string, name string, tokenHash string) error {
+	_, err := s.db.Exec(`
+		INSERT INTO api_tokens (id, user_id, name, token_hash, created_at)
+		VALUES (?, ?, ?, ?, ?)
+	`, newID("token"), userID, name, tokenHash, time.Now().UTC().Format(time.RFC3339))
+	return err
+}
+
+func (s *SQLiteStore) FindAPITokenByHash(tokenHash string) (auth.User, error) {
+	var user auth.User
+	err := s.db.QueryRow(`
+		SELECT u.id, u.username, u.password_hash, u.role, u.status, u.display_name
+		FROM api_tokens t
+		JOIN users u ON u.id = t.user_id
+		WHERE t.token_hash = ?
+	`, tokenHash).Scan(&user.ID, &user.Username, &user.PasswordHash, &user.Role, &user.Status, &user.DisplayName)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return auth.User{}, errors.New("invalid token")
+		}
+		return auth.User{}, err
+	}
+	if user.Status != "active" {
+		return auth.User{}, errors.New("user is disabled")
+	}
+	_, _ = s.db.Exec(`UPDATE api_tokens SET last_used_at = ? WHERE token_hash = ?`, time.Now().UTC().Format(time.RFC3339), tokenHash)
+	user.PasswordHash = ""
+	return user, nil
 }
 
 func OpenSQLite(cfg config.Config) (*SQLiteStore, error) {
