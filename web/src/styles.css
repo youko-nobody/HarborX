@@ -504,6 +504,12 @@ textarea {
   letter-spacing: 0.08em;
 }
 
+.template-actions {
+  display: grid;
+  gap: 8px;
+  justify-items: end;
+}
+
 .remote-layout {
   display: grid;
   grid-template-columns: 0.8fr 0.8fr 1.4fr;

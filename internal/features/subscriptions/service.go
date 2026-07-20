@@ -42,6 +42,8 @@ type Summary struct {
 type Repository interface {
 	ListSubscriptions() ([]Subscription, error)
 	CreateSubscription(input CreateInput) (Subscription, error)
+	UpdateSubscription(id string, input CreateInput) (Subscription, error)
+	DeleteSubscription(id string) error
 	ListNodes() ([]nodes.Node, error)
 	ListRuleSets() ([]rules.RuleSet, error)
 	ListTemplates() ([]templates.Template, error)
@@ -84,6 +86,26 @@ func (s Service) Create(input CreateInput) (Subscription, error) {
 		return Subscription{}, errors.New("subscriptions repository is not configured")
 	}
 	return s.repo.CreateSubscription(input)
+}
+
+func (s Service) Update(id string, input CreateInput) (Subscription, error) {
+	if s.repo == nil {
+		return Subscription{}, errors.New("subscriptions repository is not configured")
+	}
+	if strings.TrimSpace(id) == "" {
+		return Subscription{}, errors.New("subscription id is required")
+	}
+	return s.repo.UpdateSubscription(id, input)
+}
+
+func (s Service) Delete(id string) error {
+	if s.repo == nil {
+		return errors.New("subscriptions repository is not configured")
+	}
+	if strings.TrimSpace(id) == "" {
+		return errors.New("subscription id is required")
+	}
+	return s.repo.DeleteSubscription(id)
 }
 
 type RenderedSubscription struct {

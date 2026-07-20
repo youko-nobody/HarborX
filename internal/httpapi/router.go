@@ -195,23 +195,39 @@ func NewRouter(deps Dependencies) http.Handler {
 	})
 
 	mux.HandleFunc("/api/v1/nodes/", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodDelete {
-			writeMethodNotAllowed(w, http.MethodDelete)
-			return
-		}
-		if !requireAuth(w, r, deps) {
-			return
-		}
 		id := strings.TrimPrefix(r.URL.Path, "/api/v1/nodes/")
 		if id == "" {
 			writeError(w, http.StatusBadRequest, errors.New("node id is required"))
 			return
 		}
-		if err := deps.Nodes.Delete(id); err != nil {
-			writeError(w, http.StatusBadRequest, err)
-			return
+		switch r.Method {
+		case http.MethodPut:
+			if !requireAuth(w, r, deps) {
+				return
+			}
+			var input nodes.CreateInput
+			if err := decodeJSON(r, &input); err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			item, err := deps.Nodes.Update(id, input)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, item)
+		case http.MethodDelete:
+			if !requireAuth(w, r, deps) {
+				return
+			}
+			if err := deps.Nodes.Delete(id); err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			writeMethodNotAllowed(w, http.MethodPut, http.MethodDelete)
 		}
-		w.WriteHeader(http.StatusNoContent)
 	})
 
 	mux.HandleFunc("/api/v1/subscriptions/summary", func(w http.ResponseWriter, r *http.Request) {
@@ -250,7 +266,44 @@ func NewRouter(deps Dependencies) http.Handler {
 	mux.HandleFunc("/api/v1/subscriptions/", func(w http.ResponseWriter, r *http.Request) {
 		path := strings.TrimPrefix(r.URL.Path, "/api/v1/subscriptions/")
 		parts := strings.Split(strings.Trim(path, "/"), "/")
-		if len(parts) != 2 || parts[0] == "" {
+		if len(parts) == 0 || parts[0] == "" {
+			writeError(w, http.StatusBadRequest, errors.New("subscription id is required"))
+			return
+		}
+
+		if len(parts) == 1 {
+			switch r.Method {
+			case http.MethodPut:
+				if !requireAuth(w, r, deps) {
+					return
+				}
+				var input subscriptions.CreateInput
+				if err := decodeJSON(r, &input); err != nil {
+					writeError(w, http.StatusBadRequest, err)
+					return
+				}
+				item, err := deps.Subscriptions.Update(parts[0], input)
+				if err != nil {
+					writeError(w, http.StatusBadRequest, err)
+					return
+				}
+				writeJSON(w, http.StatusOK, item)
+			case http.MethodDelete:
+				if !requireAuth(w, r, deps) {
+					return
+				}
+				if err := deps.Subscriptions.Delete(parts[0]); err != nil {
+					writeError(w, http.StatusBadRequest, err)
+					return
+				}
+				w.WriteHeader(http.StatusNoContent)
+			default:
+				writeMethodNotAllowed(w, http.MethodPut, http.MethodDelete)
+			}
+			return
+		}
+
+		if len(parts) != 2 {
 			writeError(w, http.StatusBadRequest, errors.New("subscription action path must be /api/v1/subscriptions/{id}/preview or /download"))
 			return
 		}
@@ -386,6 +439,42 @@ func NewRouter(deps Dependencies) http.Handler {
 			writeJSON(w, http.StatusCreated, item)
 		default:
 			writeMethodNotAllowed(w, http.MethodGet, http.MethodPost)
+		}
+	})
+
+	mux.HandleFunc("/api/v1/templates/", func(w http.ResponseWriter, r *http.Request) {
+		id := strings.TrimPrefix(r.URL.Path, "/api/v1/templates/")
+		if id == "" {
+			writeError(w, http.StatusBadRequest, errors.New("template id is required"))
+			return
+		}
+		switch r.Method {
+		case http.MethodPut:
+			if !requireAuth(w, r, deps) {
+				return
+			}
+			var input templates.CreateInput
+			if err := decodeJSON(r, &input); err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			item, err := deps.Templates.Update(id, input)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, item)
+		case http.MethodDelete:
+			if !requireAuth(w, r, deps) {
+				return
+			}
+			if err := deps.Templates.Delete(id); err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			writeMethodNotAllowed(w, http.MethodPut, http.MethodDelete)
 		}
 	})
 

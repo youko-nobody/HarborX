@@ -356,6 +356,85 @@ func (s *SQLiteStore) DeleteNode(id string) error {
 	return nil
 }
 
+func (s *SQLiteStore) UpdateNode(id string, input nodes.CreateInput) (nodes.Node, error) {
+	if strings.TrimSpace(input.Name) == "" {
+		return nodes.Node{}, errors.New("node name is required")
+	}
+	if strings.TrimSpace(input.Protocol) == "" {
+		return nodes.Node{}, errors.New("node protocol is required")
+	}
+	if strings.TrimSpace(input.ServerHost) == "" {
+		return nodes.Node{}, errors.New("node server host is required")
+	}
+	if input.ServerPort <= 0 {
+		return nodes.Node{}, errors.New("node server port must be greater than 0")
+	}
+	if strings.TrimSpace(input.SourceKind) == "" {
+		input.SourceKind = "manual"
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	result, err := s.db.Exec(`
+		UPDATE nodes
+		SET name = ?, source_kind = ?, protocol = ?, server_host = ?, server_port = ?, tags_json = ?, metadata_json = ?, enabled = ?, updated_at = ?
+		WHERE id = ?
+	`,
+		strings.TrimSpace(input.Name),
+		input.SourceKind,
+		input.Protocol,
+		input.ServerHost,
+		input.ServerPort,
+		encodeJSON(cloneStringSlice(input.Tags)),
+		encodeJSON(cloneMap(input.Metadata)),
+		boolToInt(input.Enabled),
+		now,
+		id,
+	)
+	if err != nil {
+		return nodes.Node{}, err
+	}
+	if rows, err := result.RowsAffected(); err != nil {
+		return nodes.Node{}, err
+	} else if rows == 0 {
+		return nodes.Node{}, errors.New("node not found")
+	}
+	return s.findNode(id)
+}
+
+func (s *SQLiteStore) findNode(id string) (nodes.Node, error) {
+	var item nodes.Node
+	var tagsJSON string
+	var metadataJSON string
+	var enabled int
+	err := s.db.QueryRow(`
+		SELECT id, name, source_kind, protocol, server_host, server_port, tags_json, metadata_json, enabled, created_at, updated_at
+		FROM nodes
+		WHERE id = ?
+	`, id).Scan(
+		&item.ID,
+		&item.Name,
+		&item.SourceKind,
+		&item.Protocol,
+		&item.ServerHost,
+		&item.ServerPort,
+		&tagsJSON,
+		&metadataJSON,
+		&enabled,
+		&item.CreatedAt,
+		&item.UpdatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nodes.Node{}, errors.New("node not found")
+		}
+		return nodes.Node{}, err
+	}
+	item.Enabled = enabled == 1
+	item.Tags = decodeStringSlice(tagsJSON)
+	item.Metadata = decodeMap(metadataJSON)
+	return item, nil
+}
+
 func (s *SQLiteStore) ListRuleSets() ([]rules.RuleSet, error) {
 	rows, err := s.db.Query(`
 		SELECT id, name, scope, description, created_at, updated_at
@@ -667,6 +746,89 @@ func (s *SQLiteStore) CreateTemplate(input templates.CreateInput) (templates.Tem
 	return item, nil
 }
 
+func (s *SQLiteStore) UpdateTemplate(id string, input templates.CreateInput) (templates.Template, error) {
+	if strings.TrimSpace(input.Name) == "" {
+		return templates.Template{}, errors.New("template name is required")
+	}
+	if strings.TrimSpace(input.Kind) == "" {
+		input.Kind = "private"
+	}
+	if strings.TrimSpace(input.Content) == "" {
+		return templates.Template{}, errors.New("template content is required")
+	}
+	if locked, err := s.templateLocked(id); err != nil {
+		return templates.Template{}, err
+	} else if locked {
+		return templates.Template{}, errors.New("built-in templates are locked")
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	result, err := s.db.Exec(`
+		UPDATE templates
+		SET name = ?, kind = ?, description = ?, variables_json = ?, content = ?, updated_at = ?
+		WHERE id = ?
+	`, strings.TrimSpace(input.Name), input.Kind, input.Description, encodeJSON(cloneStringSlice(input.Variables)), input.Content, now, id)
+	if err != nil {
+		return templates.Template{}, err
+	}
+	if rows, err := result.RowsAffected(); err != nil {
+		return templates.Template{}, err
+	} else if rows == 0 {
+		return templates.Template{}, errors.New("template not found")
+	}
+	return s.findTemplate(id)
+}
+
+func (s *SQLiteStore) DeleteTemplate(id string) error {
+	if locked, err := s.templateLocked(id); err != nil {
+		return err
+	} else if locked {
+		return errors.New("built-in templates are locked")
+	}
+	result, err := s.db.Exec(`DELETE FROM templates WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	if rows, err := result.RowsAffected(); err != nil {
+		return err
+	} else if rows == 0 {
+		return errors.New("template not found")
+	}
+	return nil
+}
+
+func (s *SQLiteStore) findTemplate(id string) (templates.Template, error) {
+	var item templates.Template
+	var variablesJSON string
+	var locked int
+	err := s.db.QueryRow(`
+		SELECT id, name, kind, description, variables_json, content, locked
+		FROM templates
+		WHERE id = ?
+	`, id).Scan(&item.ID, &item.Name, &item.Kind, &item.Description, &variablesJSON, &item.Content, &locked)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return templates.Template{}, errors.New("template not found")
+		}
+		return templates.Template{}, err
+	}
+	item.Variables = decodeStringSlice(variablesJSON)
+	item.Locked = locked == 1
+	return item, nil
+}
+
+func (s *SQLiteStore) templateLocked(id string) (bool, error) {
+	var locked int
+	err := s.db.QueryRow(`SELECT locked FROM templates WHERE id = ?`, id).Scan(&locked)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, errors.New("template not found")
+		}
+		return false, err
+	}
+	return locked == 1, nil
+}
+
 func (s *SQLiteStore) ListSubscriptions() ([]subscriptions.Subscription, error) {
 	rows, err := s.db.Query(`
 		SELECT id, name, owner_user_id, output_format, template_id, source_json, options_json, created_at, updated_at
@@ -748,6 +910,89 @@ func (s *SQLiteStore) CreateSubscription(input subscriptions.CreateInput) (subsc
 		return subscriptions.Subscription{}, err
 	}
 
+	return item, nil
+}
+
+func (s *SQLiteStore) UpdateSubscription(id string, input subscriptions.CreateInput) (subscriptions.Subscription, error) {
+	if strings.TrimSpace(input.Name) == "" {
+		return subscriptions.Subscription{}, errors.New("subscription name is required")
+	}
+	if strings.TrimSpace(input.OutputFormat) == "" {
+		return subscriptions.Subscription{}, errors.New("subscription output format is required")
+	}
+	if strings.TrimSpace(input.TemplateID) == "" {
+		return subscriptions.Subscription{}, errors.New("template id is required")
+	}
+	if strings.TrimSpace(input.OwnerUserID) == "" {
+		input.OwnerUserID = "local-admin"
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	result, err := s.db.Exec(`
+		UPDATE subscriptions
+		SET name = ?, owner_user_id = ?, output_format = ?, template_id = ?, source_json = ?, options_json = ?, updated_at = ?
+		WHERE id = ?
+	`,
+		strings.TrimSpace(input.Name),
+		input.OwnerUserID,
+		input.OutputFormat,
+		input.TemplateID,
+		encodeJSON(cloneStringSlice(input.Sources)),
+		encodeJSON(cloneMap(input.Options)),
+		now,
+		id,
+	)
+	if err != nil {
+		return subscriptions.Subscription{}, err
+	}
+	if rows, err := result.RowsAffected(); err != nil {
+		return subscriptions.Subscription{}, err
+	} else if rows == 0 {
+		return subscriptions.Subscription{}, errors.New("subscription not found")
+	}
+	return s.findSubscriptionRecord(id)
+}
+
+func (s *SQLiteStore) DeleteSubscription(id string) error {
+	result, err := s.db.Exec(`DELETE FROM subscriptions WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	if rows, err := result.RowsAffected(); err != nil {
+		return err
+	} else if rows == 0 {
+		return errors.New("subscription not found")
+	}
+	return nil
+}
+
+func (s *SQLiteStore) findSubscriptionRecord(id string) (subscriptions.Subscription, error) {
+	var item subscriptions.Subscription
+	var sourceJSON string
+	var optionsJSON string
+	err := s.db.QueryRow(`
+		SELECT id, name, owner_user_id, output_format, template_id, source_json, options_json, created_at, updated_at
+		FROM subscriptions
+		WHERE id = ?
+	`, id).Scan(
+		&item.ID,
+		&item.Name,
+		&item.OwnerUserID,
+		&item.OutputFormat,
+		&item.TemplateID,
+		&sourceJSON,
+		&optionsJSON,
+		&item.CreatedAt,
+		&item.UpdatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return subscriptions.Subscription{}, errors.New("subscription not found")
+		}
+		return subscriptions.Subscription{}, err
+	}
+	item.Sources = decodeStringSlice(sourceJSON)
+	item.Options = decodeMap(optionsJSON)
 	return item, nil
 }
 

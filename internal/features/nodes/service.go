@@ -36,6 +36,7 @@ type Summary struct {
 type Repository interface {
 	ListNodes() ([]Node, error)
 	CreateNode(input CreateInput) (Node, error)
+	UpdateNode(id string, input CreateInput) (Node, error)
 	DeleteNode(id string) error
 }
 
@@ -74,4 +75,14 @@ func (s Service) Delete(id string) error {
 		return errors.New("nodes repository is not configured")
 	}
 	return s.repo.DeleteNode(id)
+}
+
+func (s Service) Update(id string, input CreateInput) (Node, error) {
+	if s.repo == nil {
+		return Node{}, errors.New("nodes repository is not configured")
+	}
+	if id == "" {
+		return Node{}, errors.New("node id is required")
+	}
+	return s.repo.UpdateNode(id, input)
 }

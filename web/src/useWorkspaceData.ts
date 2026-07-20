@@ -22,10 +22,15 @@ import {
   deleteRemoteServer,
   deleteRuleSet,
   deleteSystemSetting,
+  deleteSubscription,
+  deleteTemplate,
   deleteUser,
   loadWorkspace,
+  updateNode,
   updateRemoteServer,
   updateRuleSet,
+  updateSubscription,
+  updateTemplate,
   updateUser,
   upsertSystemSetting,
   type AppBootstrap,
@@ -85,14 +90,21 @@ export function useWorkspaceData() {
     ...state,
     refresh,
     createNode: (input: Parameters<typeof createNode>[0]) => runMutation(() => createNode(input)),
+    updateNode: (id: string, input: Parameters<typeof updateNode>[1]) => runMutation(() => updateNode(id, input)),
     deleteNode: (id: string) => runMutation(() => deleteNode(id)),
     createRuleSet: (input: Parameters<typeof createRuleSet>[0]) => runMutation(() => createRuleSet(input)),
     updateRuleSet: (id: string, input: Parameters<typeof updateRuleSet>[1]) =>
       runMutation(() => updateRuleSet(id, input)),
     deleteRuleSet: (id: string) => runMutation(() => deleteRuleSet(id)),
     createTemplate: (input: Parameters<typeof createTemplate>[0]) => runMutation(() => createTemplate(input)),
+    updateTemplate: (id: string, input: Parameters<typeof updateTemplate>[1]) =>
+      runMutation(() => updateTemplate(id, input)),
+    deleteTemplate: (id: string) => runMutation(() => deleteTemplate(id)),
     createSubscription: (input: Parameters<typeof createSubscription>[0]) =>
       runMutation(() => createSubscription(input)),
+    updateSubscription: (id: string, input: Parameters<typeof updateSubscription>[1]) =>
+      runMutation(() => updateSubscription(id, input)),
+    deleteSubscription: (id: string) => runMutation(() => deleteSubscription(id)),
     createRemoteServer: (input: Parameters<typeof createRemoteServer>[0]) => runMutation(() => createRemoteServer(input)),
     updateRemoteServer: (id: string, input: Parameters<typeof updateRemoteServer>[1]) =>
       runMutation(() => updateRemoteServer(id, input)),

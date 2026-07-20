@@ -386,6 +386,25 @@ export function deleteNode(id: string) {
   });
 }
 
+export function updateNode(
+  id: string,
+  input: {
+    name: string;
+    sourceKind: string;
+    protocol: string;
+    serverHost: string;
+    serverPort: number;
+    tags: string[];
+    metadata: Record<string, unknown>;
+    enabled: boolean;
+  },
+) {
+  return fetchJSON<NodeRecord>(`/api/v1/nodes/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(input),
+  });
+}
+
 export function createRuleSet(input: RuleSetInput) {
   return fetchJSON<RuleSetRecord>("/api/v1/rulesets", {
     method: "POST",
@@ -426,6 +445,28 @@ export function createTemplate(input: {
   });
 }
 
+export function updateTemplate(
+  id: string,
+  input: {
+    name: string;
+    kind: string;
+    description: string;
+    variables: string[];
+    content: string;
+  },
+) {
+  return fetchJSON<TemplateRecord>(`/api/v1/templates/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(input),
+  });
+}
+
+export function deleteTemplate(id: string) {
+  return fetchJSON<void>(`/api/v1/templates/${id}`, {
+    method: "DELETE",
+  });
+}
+
 export function createSubscription(input: {
   name: string;
   ownerUserId: string;
@@ -437,6 +478,29 @@ export function createSubscription(input: {
   return fetchJSON<SubscriptionRecord>("/api/v1/subscriptions", {
     method: "POST",
     body: JSON.stringify(input),
+  });
+}
+
+export function updateSubscription(
+  id: string,
+  input: {
+    name: string;
+    ownerUserId: string;
+    outputFormat: string;
+    templateId: string;
+    sources: string[];
+    options: Record<string, unknown>;
+  },
+) {
+  return fetchJSON<SubscriptionRecord>(`/api/v1/subscriptions/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(input),
+  });
+}
+
+export function deleteSubscription(id: string) {
+  return fetchJSON<void>(`/api/v1/subscriptions/${id}`, {
+    method: "DELETE",
   });
 }
 

@@ -23,6 +23,8 @@ type CreateInput struct {
 type Repository interface {
 	ListTemplates() ([]Template, error)
 	CreateTemplate(input CreateInput) (Template, error)
+	UpdateTemplate(id string, input CreateInput) (Template, error)
+	DeleteTemplate(id string) error
 }
 
 type Service struct {
@@ -45,4 +47,24 @@ func (s Service) Create(input CreateInput) (Template, error) {
 		return Template{}, errors.New("templates repository is not configured")
 	}
 	return s.repo.CreateTemplate(input)
+}
+
+func (s Service) Update(id string, input CreateInput) (Template, error) {
+	if s.repo == nil {
+		return Template{}, errors.New("templates repository is not configured")
+	}
+	if id == "" {
+		return Template{}, errors.New("template id is required")
+	}
+	return s.repo.UpdateTemplate(id, input)
+}
+
+func (s Service) Delete(id string) error {
+	if s.repo == nil {
+		return errors.New("templates repository is not configured")
+	}
+	if id == "" {
+		return errors.New("template id is required")
+	}
+	return s.repo.DeleteTemplate(id)
 }

@@ -50,11 +50,14 @@ export function App() {
     busy,
     refresh,
     createNode,
+    updateNode,
     createRuleSet,
     updateRuleSet,
     deleteRuleSet,
     createSubscription,
+    deleteSubscription,
     createTemplate,
+    deleteTemplate,
     deleteNode,
     createRemoteServer,
     updateRemoteServer,
@@ -856,6 +859,24 @@ export function App() {
                   <button type="button" className="ghost-button" onClick={() => void deleteNode(item.id)}>
                     Delete
                   </button>
+                  <button
+                    type="button"
+                    className="ghost-button"
+                    onClick={() =>
+                      void updateNode(item.id, {
+                        name: item.name,
+                        sourceKind: item.sourceKind,
+                        protocol: item.protocol,
+                        serverHost: item.serverHost,
+                        serverPort: item.serverPort,
+                        tags: item.tags,
+                        metadata: item.metadata,
+                        enabled: !item.enabled,
+                      })
+                    }
+                  >
+                    {item.enabled ? "Disable" : "Enable"}
+                  </button>
                 </div>
               ))}
             </div>
@@ -892,7 +913,14 @@ export function App() {
                       <p>{template.description}</p>
                       <code>{template.variables.join(", ")}</code>
                     </div>
-                    <span>{template.kind}</span>
+                    <div className="template-actions">
+                      <span>{template.kind}</span>
+                      {!template.locked ? (
+                        <button type="button" className="ghost-button" onClick={() => void deleteTemplate(template.id)}>
+                          Delete
+                        </button>
+                      ) : null}
+                    </div>
                   </div>
                 ))}
               </div>
@@ -956,6 +984,9 @@ export function App() {
                     <a className="ghost-link" href={subscriptionDownloadURL(item.id)}>
                       Download
                     </a>
+                    <button type="button" className="ghost-button" onClick={() => void deleteSubscription(item.id)}>
+                      Delete
+                    </button>
                   </div>
                 </div>
               ))}
