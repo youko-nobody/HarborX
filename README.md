@@ -25,6 +25,7 @@ This project is being built as a full self-hosted control plane and already incl
 
 ## Project Layout
 
+- `cmd/agent`: remote server agent loop for heartbeat and queued tasks
 - `cmd/server`: Go API entrypoint
 - `internal/app`: app bootstrap and feature wiring
 - `internal/config`: environment configuration
@@ -39,6 +40,23 @@ This project is being built as a full self-hosted control plane and already incl
 - No `license` module
 - No `pro` feature checks
 - No paid gating or entitlement logic
+
+## Agent Quick Start
+
+Register a remote server in the HarborX console and copy the one-time agent token.
+
+```bash
+export HARBORX_AGENT_BASE_URL="https://your-harborx.example.com"
+export HARBORX_AGENT_TOKEN="hxa_..."
+export HARBORX_AGENT_INTERVAL_SECONDS=10
+go run ./cmd/agent
+```
+
+`shell-script` tasks are disabled by default. Enable them only on servers you control:
+
+```bash
+export HARBORX_AGENT_ALLOW_SHELL=1
+```
 
 ## Current Foundation
 
