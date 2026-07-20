@@ -1,0 +1,16 @@
+version: "3.9"
+
+services:
+  harborx:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: harborx
+    restart: unless-stopped
+    ports:
+      - "18080:18080"
+    env_file:
+      - .env.example
+    volumes:
+      - ./data:/app/data
+      - ./templates:/app/templates
