@@ -20,6 +20,7 @@ import (
 	"harborx/internal/features/dns"
 	"harborx/internal/features/nodes"
 	"harborx/internal/features/notifications"
+	"harborx/internal/features/packages"
 	"harborx/internal/features/proxygroups"
 	"harborx/internal/features/remote"
 	"harborx/internal/features/rules"
@@ -28,6 +29,7 @@ import (
 	"harborx/internal/features/templates"
 	"harborx/internal/features/traffic"
 	"harborx/internal/features/users"
+	"harborx/internal/features/xray"
 )
 
 //go:embed schema.sql seeds.sql
@@ -997,6 +999,244 @@ func (s *SQLiteStore) findSubscriptionRecord(id string) (subscriptions.Subscript
 	return item, nil
 }
 
+func (s *SQLiteStore) ListPackages() ([]packages.Package, error) {
+	rows, err := s.db.Query(`
+		SELECT id, name, description, bandwidth_bytes, device_limit, duration_days, features_json, enabled, created_at, updated_at
+		FROM packages
+		ORDER BY created_at DESC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var items []packages.Package
+	for rows.Next() {
+		var item packages.Package
+		var featuresJSON string
+		var enabled int
+		if err := rows.Scan(
+			&item.ID,
+			&item.Name,
+			&item.Description,
+			&item.BandwidthBytes,
+			&item.DeviceLimit,
+			&item.DurationDays,
+			&featuresJSON,
+			&enabled,
+			&item.CreatedAt,
+			&item.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		item.Features = decodeStringSlice(featuresJSON)
+		item.Enabled = enabled == 1
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *SQLiteStore) CreatePackage(input packages.CreatePackageInput) (packages.Package, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	item := packages.Package{
+		ID:             newID("package"),
+		Name:           strings.TrimSpace(input.Name),
+		Description:    input.Description,
+		BandwidthBytes: input.BandwidthBytes,
+		DeviceLimit:    input.DeviceLimit,
+		DurationDays:   input.DurationDays,
+		Features:       cloneStringSlice(input.Features),
+		Enabled:        input.Enabled,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+	_, err := s.db.Exec(`
+		INSERT INTO packages (id, name, description, bandwidth_bytes, device_limit, duration_days, features_json, enabled, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, item.ID, item.Name, item.Description, item.BandwidthBytes, item.DeviceLimit, item.DurationDays, encodeJSON(item.Features), boolToInt(item.Enabled), item.CreatedAt, item.UpdatedAt)
+	if err != nil {
+		return packages.Package{}, err
+	}
+	return item, nil
+}
+
+func (s *SQLiteStore) UpdatePackage(id string, input packages.CreatePackageInput) (packages.Package, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	result, err := s.db.Exec(`
+		UPDATE packages
+		SET name = ?, description = ?, bandwidth_bytes = ?, device_limit = ?, duration_days = ?, features_json = ?, enabled = ?, updated_at = ?
+		WHERE id = ?
+	`, strings.TrimSpace(input.Name), input.Description, input.BandwidthBytes, input.DeviceLimit, input.DurationDays, encodeJSON(cloneStringSlice(input.Features)), boolToInt(input.Enabled), now, id)
+	if err != nil {
+		return packages.Package{}, err
+	}
+	if rows, err := result.RowsAffected(); err != nil {
+		return packages.Package{}, err
+	} else if rows == 0 {
+		return packages.Package{}, errors.New("package not found")
+	}
+	return s.findPackage(id)
+}
+
+func (s *SQLiteStore) DeletePackage(id string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM user_entitlements WHERE package_id = ?`, id); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	result, err := tx.Exec(`DELETE FROM packages WHERE id = ?`, id)
+	if err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if rows, err := result.RowsAffected(); err != nil {
+		_ = tx.Rollback()
+		return err
+	} else if rows == 0 {
+		_ = tx.Rollback()
+		return errors.New("package not found")
+	}
+	return tx.Commit()
+}
+
+func (s *SQLiteStore) findPackage(id string) (packages.Package, error) {
+	var item packages.Package
+	var featuresJSON string
+	var enabled int
+	err := s.db.QueryRow(`
+		SELECT id, name, description, bandwidth_bytes, device_limit, duration_days, features_json, enabled, created_at, updated_at
+		FROM packages
+		WHERE id = ?
+	`, id).Scan(&item.ID, &item.Name, &item.Description, &item.BandwidthBytes, &item.DeviceLimit, &item.DurationDays, &featuresJSON, &enabled, &item.CreatedAt, &item.UpdatedAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return packages.Package{}, errors.New("package not found")
+		}
+		return packages.Package{}, err
+	}
+	item.Features = decodeStringSlice(featuresJSON)
+	item.Enabled = enabled == 1
+	return item, nil
+}
+
+func (s *SQLiteStore) ListEntitlements(userID string) ([]packages.Entitlement, error) {
+	query := `
+		SELECT id, user_id, package_id, status, started_at, expires_at, metadata_json, created_at, updated_at
+		FROM user_entitlements
+	`
+	var args []any
+	if strings.TrimSpace(userID) != "" {
+		query += ` WHERE user_id = ?`
+		args = append(args, userID)
+	}
+	query += ` ORDER BY created_at DESC`
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var items []packages.Entitlement
+	for rows.Next() {
+		var item packages.Entitlement
+		var metadataJSON string
+		if err := rows.Scan(&item.ID, &item.UserID, &item.PackageID, &item.Status, &item.StartedAt, &item.ExpiresAt, &metadataJSON, &item.CreatedAt, &item.UpdatedAt); err != nil {
+			return nil, err
+		}
+		item.Metadata = decodeMap(metadataJSON)
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *SQLiteStore) CreateEntitlement(input packages.CreateEntitlementInput) (packages.Entitlement, error) {
+	if _, err := s.findUser(input.UserID); err != nil {
+		return packages.Entitlement{}, err
+	}
+	if _, err := s.findPackage(input.PackageID); err != nil {
+		return packages.Entitlement{}, err
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	item := packages.Entitlement{
+		ID:        newID("entitlement"),
+		UserID:    strings.TrimSpace(input.UserID),
+		PackageID: strings.TrimSpace(input.PackageID),
+		Status:    input.Status,
+		StartedAt: now,
+		ExpiresAt: input.ExpiresAt,
+		Metadata:  cloneMap(input.Metadata),
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	_, err := s.db.Exec(`
+		INSERT INTO user_entitlements (id, user_id, package_id, status, started_at, expires_at, metadata_json, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, item.ID, item.UserID, item.PackageID, item.Status, item.StartedAt, item.ExpiresAt, encodeJSON(item.Metadata), item.CreatedAt, item.UpdatedAt)
+	if err != nil {
+		return packages.Entitlement{}, err
+	}
+	return item, nil
+}
+
+func (s *SQLiteStore) UpdateEntitlement(id string, input packages.CreateEntitlementInput) (packages.Entitlement, error) {
+	if _, err := s.findUser(input.UserID); err != nil {
+		return packages.Entitlement{}, err
+	}
+	if _, err := s.findPackage(input.PackageID); err != nil {
+		return packages.Entitlement{}, err
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	result, err := s.db.Exec(`
+		UPDATE user_entitlements
+		SET user_id = ?, package_id = ?, status = ?, expires_at = ?, metadata_json = ?, updated_at = ?
+		WHERE id = ?
+	`, strings.TrimSpace(input.UserID), strings.TrimSpace(input.PackageID), input.Status, input.ExpiresAt, encodeJSON(cloneMap(input.Metadata)), now, id)
+	if err != nil {
+		return packages.Entitlement{}, err
+	}
+	if rows, err := result.RowsAffected(); err != nil {
+		return packages.Entitlement{}, err
+	} else if rows == 0 {
+		return packages.Entitlement{}, errors.New("entitlement not found")
+	}
+	return s.findEntitlement(id)
+}
+
+func (s *SQLiteStore) DeleteEntitlement(id string) error {
+	result, err := s.db.Exec(`DELETE FROM user_entitlements WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	if rows, err := result.RowsAffected(); err != nil {
+		return err
+	} else if rows == 0 {
+		return errors.New("entitlement not found")
+	}
+	return nil
+}
+
+func (s *SQLiteStore) findEntitlement(id string) (packages.Entitlement, error) {
+	var item packages.Entitlement
+	var metadataJSON string
+	err := s.db.QueryRow(`
+		SELECT id, user_id, package_id, status, started_at, expires_at, metadata_json, created_at, updated_at
+		FROM user_entitlements
+		WHERE id = ?
+	`, id).Scan(&item.ID, &item.UserID, &item.PackageID, &item.Status, &item.StartedAt, &item.ExpiresAt, &metadataJSON, &item.CreatedAt, &item.UpdatedAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return packages.Entitlement{}, errors.New("entitlement not found")
+		}
+		return packages.Entitlement{}, err
+	}
+	item.Metadata = decodeMap(metadataJSON)
+	return item, nil
+}
+
 func (s *SQLiteStore) ListRemoteServers() ([]remote.RemoteServer, error) {
 	rows, err := s.db.Query(`
 		SELECT id, name, host, connection_mode, status, metadata_json, created_at, updated_at
@@ -1109,6 +1349,14 @@ func (s *SQLiteStore) DeleteRemoteServer(id string) error {
 	if err != nil {
 		return err
 	}
+	if _, err := tx.Exec(`DELETE FROM remote_task_logs WHERE remote_server_id = ?`, id); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM agent_logs WHERE remote_server_id = ?`, id); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
 	if _, err := tx.Exec(`DELETE FROM remote_tasks WHERE remote_server_id = ?`, id); err != nil {
 		_ = tx.Rollback()
 		return err
@@ -1201,6 +1449,89 @@ func (s *SQLiteStore) CreateRemoteTask(serverID string, input remote.CreateTaskI
 		return remote.RemoteTask{}, err
 	}
 
+	return item, nil
+}
+
+func (s *SQLiteStore) ListRemoteTaskLogs(serverID string, taskID string) ([]remote.TaskLog, error) {
+	query := `
+		SELECT id, remote_task_id, remote_server_id, event_kind, message, created_at
+		FROM remote_task_logs
+		WHERE remote_server_id = ?
+	`
+	args := []any{serverID}
+	if strings.TrimSpace(taskID) != "" {
+		query += ` AND remote_task_id = ?`
+		args = append(args, taskID)
+	}
+	query += ` ORDER BY created_at DESC LIMIT 500`
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var items []remote.TaskLog
+	for rows.Next() {
+		var item remote.TaskLog
+		if err := rows.Scan(&item.ID, &item.RemoteTaskID, &item.RemoteServerID, &item.EventKind, &item.Message, &item.CreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *SQLiteStore) CreateRemoteTaskLog(serverID string, taskID string, eventKind string, message string) error {
+	_, err := s.db.Exec(`
+		INSERT INTO remote_task_logs (id, remote_task_id, remote_server_id, event_kind, message, created_at)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`, newID("tasklog"), taskID, serverID, strings.TrimSpace(eventKind), message, time.Now().UTC().Format(time.RFC3339))
+	return err
+}
+
+func (s *SQLiteStore) ListAgentLogs(serverID string) ([]remote.AgentLog, error) {
+	rows, err := s.db.Query(`
+		SELECT id, remote_server_id, level, message, metadata_json, created_at
+		FROM agent_logs
+		WHERE remote_server_id = ?
+		ORDER BY created_at DESC
+		LIMIT 500
+	`, serverID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var items []remote.AgentLog
+	for rows.Next() {
+		var item remote.AgentLog
+		var metadataJSON string
+		if err := rows.Scan(&item.ID, &item.RemoteServerID, &item.Level, &item.Message, &metadataJSON, &item.CreatedAt); err != nil {
+			return nil, err
+		}
+		item.Metadata = decodeMap(metadataJSON)
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *SQLiteStore) CreateAgentLog(serverID string, input remote.CreateAgentLogInput) (remote.AgentLog, error) {
+	item := remote.AgentLog{
+		ID:             newID("agentlog"),
+		RemoteServerID: serverID,
+		Level:          strings.TrimSpace(input.Level),
+		Message:        strings.TrimSpace(input.Message),
+		Metadata:       cloneMap(input.Metadata),
+		CreatedAt:      time.Now().UTC().Format(time.RFC3339),
+	}
+	_, err := s.db.Exec(`
+		INSERT INTO agent_logs (id, remote_server_id, level, message, metadata_json, created_at)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`, item.ID, item.RemoteServerID, item.Level, item.Message, encodeJSON(item.Metadata), item.CreatedAt)
+	if err != nil {
+		return remote.AgentLog{}, err
+	}
 	return item, nil
 }
 
@@ -1346,6 +1677,86 @@ func (s *SQLiteStore) findRemoteServer(id string) (remote.RemoteServer, error) {
 		return remote.RemoteServer{}, err
 	}
 	item.Metadata = decodeMap(metadataJSON)
+	return item, nil
+}
+
+func (s *SQLiteStore) ListXRAYSnapshots(targetKind string, targetID string) ([]xray.Snapshot, error) {
+	query := `
+		SELECT id, target_kind, target_id, config_json, summary, created_at
+		FROM xray_snapshots
+	`
+	var args []any
+	var filters []string
+	if strings.TrimSpace(targetKind) != "" {
+		filters = append(filters, "target_kind = ?")
+		args = append(args, targetKind)
+	}
+	if strings.TrimSpace(targetID) != "" {
+		filters = append(filters, "target_id = ?")
+		args = append(args, targetID)
+	}
+	if len(filters) > 0 {
+		query += " WHERE " + strings.Join(filters, " AND ")
+	}
+	query += " ORDER BY created_at DESC LIMIT 100"
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var items []xray.Snapshot
+	for rows.Next() {
+		var item xray.Snapshot
+		if err := rows.Scan(&item.ID, &item.TargetKind, &item.TargetID, &item.Config, &item.Summary, &item.CreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *SQLiteStore) CreateXRAYSnapshot(input xray.SnapshotInput) (xray.Snapshot, error) {
+	targetKind := strings.TrimSpace(input.TargetKind)
+	if targetKind == "" {
+		targetKind = "local"
+	}
+	targetID := strings.TrimSpace(input.TargetID)
+	if targetID == "" {
+		targetID = "default"
+	}
+	item := xray.Snapshot{
+		ID:         newID("xraysnap"),
+		TargetKind: targetKind,
+		TargetID:   targetID,
+		Config:     input.Config,
+		Summary:    input.Summary,
+		CreatedAt:  time.Now().UTC().Format(time.RFC3339),
+	}
+	_, err := s.db.Exec(`
+		INSERT INTO xray_snapshots (id, target_kind, target_id, config_json, summary, created_at)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`, item.ID, item.TargetKind, item.TargetID, item.Config, item.Summary, item.CreatedAt)
+	if err != nil {
+		return xray.Snapshot{}, err
+	}
+	return item, nil
+}
+
+func (s *SQLiteStore) GetXRAYSnapshot(id string) (xray.Snapshot, error) {
+	var item xray.Snapshot
+	err := s.db.QueryRow(`
+		SELECT id, target_kind, target_id, config_json, summary, created_at
+		FROM xray_snapshots
+		WHERE id = ?
+	`, id).Scan(&item.ID, &item.TargetKind, &item.TargetID, &item.Config, &item.Summary, &item.CreatedAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return xray.Snapshot{}, errors.New("xray snapshot not found")
+		}
+		return xray.Snapshot{}, err
+	}
 	return item, nil
 }
 

@@ -17,6 +17,7 @@ import (
 	"harborx/internal/features/dns"
 	"harborx/internal/features/nodes"
 	"harborx/internal/features/notifications"
+	"harborx/internal/features/packages"
 	"harborx/internal/features/proxygroups"
 	"harborx/internal/features/remote"
 	"harborx/internal/features/rules"
@@ -44,6 +45,7 @@ type Dependencies struct {
 	Certificates  certificates.Service
 	DNS           dns.Service
 	Notifications notifications.Service
+	Packages      packages.Service
 	Backups       backups.Service
 	System        system.Service
 	WebDistDir    string
@@ -352,6 +354,140 @@ func NewRouter(deps Dependencies) http.Handler {
 		}
 	})
 
+	mux.HandleFunc("/api/v1/packages/summary", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, deps.Packages.Summary())
+	})
+
+	mux.HandleFunc("/api/v1/packages", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			items, err := deps.Packages.ListPackages()
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, items)
+		case http.MethodPost:
+			if !requireAuth(w, r, deps) {
+				return
+			}
+			var input packages.CreatePackageInput
+			if err := decodeJSON(r, &input); err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			item, err := deps.Packages.CreatePackage(input)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			writeJSON(w, http.StatusCreated, item)
+		default:
+			writeMethodNotAllowed(w, http.MethodGet, http.MethodPost)
+		}
+	})
+
+	mux.HandleFunc("/api/v1/packages/", func(w http.ResponseWriter, r *http.Request) {
+		id := strings.TrimPrefix(r.URL.Path, "/api/v1/packages/")
+		if id == "" {
+			writeError(w, http.StatusBadRequest, errors.New("package id is required"))
+			return
+		}
+		switch r.Method {
+		case http.MethodPut:
+			if !requireAuth(w, r, deps) {
+				return
+			}
+			var input packages.CreatePackageInput
+			if err := decodeJSON(r, &input); err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			item, err := deps.Packages.UpdatePackage(id, input)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, item)
+		case http.MethodDelete:
+			if !requireAuth(w, r, deps) {
+				return
+			}
+			if err := deps.Packages.DeletePackage(id); err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			writeMethodNotAllowed(w, http.MethodPut, http.MethodDelete)
+		}
+	})
+
+	mux.HandleFunc("/api/v1/entitlements", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			items, err := deps.Packages.ListEntitlements(r.URL.Query().Get("userId"))
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, items)
+		case http.MethodPost:
+			if !requireAuth(w, r, deps) {
+				return
+			}
+			var input packages.CreateEntitlementInput
+			if err := decodeJSON(r, &input); err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			item, err := deps.Packages.CreateEntitlement(input)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			writeJSON(w, http.StatusCreated, item)
+		default:
+			writeMethodNotAllowed(w, http.MethodGet, http.MethodPost)
+		}
+	})
+
+	mux.HandleFunc("/api/v1/entitlements/", func(w http.ResponseWriter, r *http.Request) {
+		id := strings.TrimPrefix(r.URL.Path, "/api/v1/entitlements/")
+		if id == "" {
+			writeError(w, http.StatusBadRequest, errors.New("entitlement id is required"))
+			return
+		}
+		switch r.Method {
+		case http.MethodPut:
+			if !requireAuth(w, r, deps) {
+				return
+			}
+			var input packages.CreateEntitlementInput
+			if err := decodeJSON(r, &input); err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			item, err := deps.Packages.UpdateEntitlement(id, input)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, item)
+		case http.MethodDelete:
+			if !requireAuth(w, r, deps) {
+				return
+			}
+			if err := deps.Packages.DeleteEntitlement(id); err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			writeMethodNotAllowed(w, http.MethodPut, http.MethodDelete)
+		}
+	})
+
 	mux.HandleFunc("/api/v1/rules/bootstrap", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, deps.Rules.Bootstrap())
 	})
@@ -585,6 +721,60 @@ func NewRouter(deps Dependencies) http.Handler {
 		writeJSON(w, http.StatusOK, preview)
 	})
 
+	mux.HandleFunc("/api/v1/xray/snapshots", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			items, err := deps.Xray.ListSnapshots(r.URL.Query().Get("targetKind"), r.URL.Query().Get("targetId"))
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, items)
+		case http.MethodPost:
+			if !requireAuth(w, r, deps) {
+				return
+			}
+			var input struct {
+				TargetKind string `json:"targetKind"`
+				TargetID   string `json:"targetId"`
+			}
+			if err := decodeJSON(r, &input); err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			item, err := deps.Xray.SaveSnapshot(input.TargetKind, input.TargetID)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			writeJSON(w, http.StatusCreated, item)
+		default:
+			writeMethodNotAllowed(w, http.MethodGet, http.MethodPost)
+		}
+	})
+
+	mux.HandleFunc("/api/v1/xray/snapshots/", func(w http.ResponseWriter, r *http.Request) {
+		path := strings.TrimPrefix(r.URL.Path, "/api/v1/xray/snapshots/")
+		parts := strings.Split(strings.Trim(path, "/"), "/")
+		if len(parts) == 2 && parts[1] == "restore" {
+			if r.Method != http.MethodPost {
+				writeMethodNotAllowed(w, http.MethodPost)
+				return
+			}
+			if !requireAuth(w, r, deps) {
+				return
+			}
+			item, err := deps.Xray.RestoreSnapshot(parts[0])
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, item)
+			return
+		}
+		writeError(w, http.StatusNotFound, errors.New("xray snapshot action not found"))
+	})
+
 	mux.HandleFunc("/api/v1/remote/summary", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, deps.Remote.Summary())
 	})
@@ -688,6 +878,34 @@ func NewRouter(deps Dependencies) http.Handler {
 			return
 		}
 
+		if len(parts) == 2 && parts[1] == "logs" {
+			if r.Method != http.MethodGet {
+				writeMethodNotAllowed(w, http.MethodGet)
+				return
+			}
+			items, err := deps.Remote.ListAgentLogs(parts[0])
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, items)
+			return
+		}
+
+		if len(parts) == 4 && parts[1] == "tasks" && parts[3] == "logs" {
+			if r.Method != http.MethodGet {
+				writeMethodNotAllowed(w, http.MethodGet)
+				return
+			}
+			items, err := deps.Remote.ListTaskLogs(parts[0], parts[2])
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, items)
+			return
+		}
+
 		writeError(w, http.StatusNotFound, errors.New("remote server action not found"))
 	})
 
@@ -720,6 +938,24 @@ func NewRouter(deps Dependencies) http.Handler {
 			return
 		}
 		writeJSON(w, http.StatusOK, claim)
+	})
+
+	mux.HandleFunc("/api/v1/agent/logs", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeMethodNotAllowed(w, http.MethodPost)
+			return
+		}
+		var input remote.CreateAgentLogInput
+		if err := decodeJSON(r, &input); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		item, err := deps.Remote.AgentLog(agentTokenFromRequest(r), input)
+		if err != nil {
+			writeError(w, http.StatusUnauthorized, err)
+			return
+		}
+		writeJSON(w, http.StatusCreated, item)
 	})
 
 	mux.HandleFunc("/api/v1/agent/tasks/", func(w http.ResponseWriter, r *http.Request) {

@@ -48,6 +48,33 @@ CREATE TABLE IF NOT EXISTS subscriptions (
     FOREIGN KEY (owner_user_id) REFERENCES users(id)
 );
 
+CREATE TABLE IF NOT EXISTS packages (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    bandwidth_bytes INTEGER NOT NULL DEFAULT 0,
+    device_limit INTEGER NOT NULL DEFAULT 0,
+    duration_days INTEGER NOT NULL DEFAULT 30,
+    features_json TEXT NOT NULL DEFAULT '[]',
+    enabled INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS user_entitlements (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    package_id TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active',
+    started_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL DEFAULT '',
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    FOREIGN KEY (package_id) REFERENCES packages(id)
+);
+
 CREATE TABLE IF NOT EXISTS proxy_groups (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
@@ -119,6 +146,27 @@ CREATE TABLE IF NOT EXISTS remote_tasks (
     FOREIGN KEY (remote_server_id) REFERENCES remote_servers(id)
 );
 
+CREATE TABLE IF NOT EXISTS remote_task_logs (
+    id TEXT PRIMARY KEY,
+    remote_task_id TEXT NOT NULL,
+    remote_server_id TEXT NOT NULL,
+    event_kind TEXT NOT NULL,
+    message TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (remote_task_id) REFERENCES remote_tasks(id),
+    FOREIGN KEY (remote_server_id) REFERENCES remote_servers(id)
+);
+
+CREATE TABLE IF NOT EXISTS agent_logs (
+    id TEXT PRIMARY KEY,
+    remote_server_id TEXT NOT NULL,
+    level TEXT NOT NULL,
+    message TEXT NOT NULL,
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (remote_server_id) REFERENCES remote_servers(id)
+);
+
 CREATE TABLE IF NOT EXISTS xray_snapshots (
     id TEXT PRIMARY KEY,
     target_kind TEXT NOT NULL,
@@ -184,4 +232,3 @@ CREATE TABLE IF NOT EXISTS system_settings (
     value_json TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
-

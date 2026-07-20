@@ -58,6 +58,24 @@ type RemoteTask struct {
 	UpdatedAt      string         `json:"updatedAt"`
 }
 
+type TaskLog struct {
+	ID             string `json:"id"`
+	RemoteTaskID   string `json:"remoteTaskId"`
+	RemoteServerID string `json:"remoteServerId"`
+	EventKind      string `json:"eventKind"`
+	Message        string `json:"message"`
+	CreatedAt      string `json:"createdAt"`
+}
+
+type AgentLog struct {
+	ID             string         `json:"id"`
+	RemoteServerID string         `json:"remoteServerId"`
+	Level          string         `json:"level"`
+	Message        string         `json:"message"`
+	Metadata       map[string]any `json:"metadata"`
+	CreatedAt      string         `json:"createdAt"`
+}
+
 type CreateTaskInput struct {
 	TaskKind string         `json:"taskKind"`
 	Payload  map[string]any `json:"payload"`
@@ -71,6 +89,12 @@ type AgentHeartbeatInput struct {
 type AgentTaskUpdateInput struct {
 	Status     string `json:"status"`
 	OutputText string `json:"outputText"`
+}
+
+type CreateAgentLogInput struct {
+	Level    string         `json:"level"`
+	Message  string         `json:"message"`
+	Metadata map[string]any `json:"metadata"`
 }
 
 type AgentTaskClaim struct {
@@ -89,6 +113,10 @@ type Repository interface {
 	HeartbeatRemoteServer(id string, status string, metadata map[string]any) (RemoteServer, error)
 	ClaimNextRemoteTask(serverID string) (*RemoteTask, error)
 	UpdateRemoteTask(serverID string, taskID string, status string, outputText string) (RemoteTask, error)
+	ListRemoteTaskLogs(serverID string, taskID string) ([]TaskLog, error)
+	CreateRemoteTaskLog(serverID string, taskID string, eventKind string, message string) error
+	ListAgentLogs(serverID string) ([]AgentLog, error)
+	CreateAgentLog(serverID string, input CreateAgentLogInput) (AgentLog, error)
 }
 
 type Service struct {
@@ -194,7 +222,62 @@ func (s Service) CreateTask(serverID string, input CreateTaskInput) (RemoteTask,
 	if !supportedTaskKind(input.TaskKind) {
 		return RemoteTask{}, errors.New("unsupported remote task kind")
 	}
-	return s.repo.CreateRemoteTask(serverID, input)
+	task, err := s.repo.CreateRemoteTask(serverID, input)
+	if err != nil {
+		return RemoteTask{}, err
+	}
+	_ = s.repo.CreateRemoteTaskLog(serverID, task.ID, "queued", "task queued by operator")
+	return task, nil
+}
+
+func (s Service) ListTaskLogs(serverID string, taskID string) ([]TaskLog, error) {
+	if s.repo == nil {
+		return nil, errors.New("remote repository is not configured")
+	}
+	if strings.TrimSpace(serverID) == "" {
+		return nil, errors.New("remote server id is required")
+	}
+	return s.repo.ListRemoteTaskLogs(serverID, taskID)
+}
+
+func (s Service) ListAgentLogs(serverID string) ([]AgentLog, error) {
+	if s.repo == nil {
+		return nil, errors.New("remote repository is not configured")
+	}
+	if strings.TrimSpace(serverID) == "" {
+		return nil, errors.New("remote server id is required")
+	}
+	return s.repo.ListAgentLogs(serverID)
+}
+
+func (s Service) CreateAgentLog(serverID string, input CreateAgentLogInput) (AgentLog, error) {
+	if s.repo == nil {
+		return AgentLog{}, errors.New("remote repository is not configured")
+	}
+	if strings.TrimSpace(serverID) == "" {
+		return AgentLog{}, errors.New("remote server id is required")
+	}
+	if strings.TrimSpace(input.Level) == "" {
+		input.Level = "info"
+	}
+	if strings.TrimSpace(input.Message) == "" {
+		return AgentLog{}, errors.New("agent log message is required")
+	}
+	return s.repo.CreateAgentLog(serverID, input)
+}
+
+func (s Service) AgentLog(token string, input CreateAgentLogInput) (AgentLog, error) {
+	server, err := s.authenticateAgent(token)
+	if err != nil {
+		return AgentLog{}, err
+	}
+	if strings.TrimSpace(input.Level) == "" {
+		input.Level = "info"
+	}
+	if strings.TrimSpace(input.Message) == "" {
+		return AgentLog{}, errors.New("agent log message is required")
+	}
+	return s.repo.CreateAgentLog(server.ID, input)
 }
 
 func (s Service) AgentHeartbeat(token string, input AgentHeartbeatInput) (RemoteServer, error) {
@@ -209,7 +292,16 @@ func (s Service) AgentHeartbeat(token string, input AgentHeartbeatInput) (Remote
 	if !supportedStatus(status) {
 		return RemoteServer{}, errors.New("unsupported remote server status")
 	}
-	return s.repo.HeartbeatRemoteServer(server.ID, status, input.Metadata)
+	updated, err := s.repo.HeartbeatRemoteServer(server.ID, status, input.Metadata)
+	if err != nil {
+		return RemoteServer{}, err
+	}
+	_, _ = s.repo.CreateAgentLog(server.ID, CreateAgentLogInput{
+		Level:    "info",
+		Message:  "agent heartbeat: " + status,
+		Metadata: input.Metadata,
+	})
+	return updated, nil
 }
 
 func (s Service) AgentClaimTask(token string) (AgentTaskClaim, error) {
@@ -220,6 +312,9 @@ func (s Service) AgentClaimTask(token string) (AgentTaskClaim, error) {
 	task, err := s.repo.ClaimNextRemoteTask(server.ID)
 	if err != nil {
 		return AgentTaskClaim{}, err
+	}
+	if task != nil {
+		_ = s.repo.CreateRemoteTaskLog(server.ID, task.ID, "claimed", "task claimed by agent")
 	}
 	return AgentTaskClaim{Server: server, Task: task}, nil
 }
@@ -235,7 +330,20 @@ func (s Service) AgentUpdateTask(token string, taskID string, input AgentTaskUpd
 	if !supportedTaskStatus(input.Status) {
 		return RemoteTask{}, errors.New("unsupported remote task status")
 	}
-	return s.repo.UpdateRemoteTask(server.ID, taskID, input.Status, input.OutputText)
+	task, err := s.repo.UpdateRemoteTask(server.ID, taskID, input.Status, input.OutputText)
+	if err != nil {
+		return RemoteTask{}, err
+	}
+	_ = s.repo.CreateRemoteTaskLog(server.ID, taskID, input.Status, input.OutputText)
+	_, _ = s.repo.CreateAgentLog(server.ID, CreateAgentLogInput{
+		Level:   logLevelForTaskStatus(input.Status),
+		Message: "task " + taskID + " " + input.Status,
+		Metadata: map[string]any{
+			"taskKind": task.TaskKind,
+			"taskId":   task.ID,
+		},
+	})
+	return task, nil
 }
 
 func (s Service) authenticateAgent(token string) (RemoteServer, error) {
@@ -298,6 +406,15 @@ func supportedTaskStatus(value string) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+func logLevelForTaskStatus(status string) string {
+	switch status {
+	case "failed", "cancelled":
+		return "error"
+	default:
+		return "info"
 	}
 }
 

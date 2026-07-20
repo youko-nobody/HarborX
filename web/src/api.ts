@@ -111,6 +111,31 @@ export type SubscriptionRecord = {
   updatedAt: string;
 };
 
+export type PackageRecord = {
+  id: string;
+  name: string;
+  description: string;
+  bandwidthBytes: number;
+  deviceLimit: number;
+  durationDays: number;
+  features: string[];
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type EntitlementRecord = {
+  id: string;
+  userId: string;
+  packageId: string;
+  status: string;
+  startedAt: string;
+  expiresAt: string;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type RenderedSubscription = {
   subscriptionId: string;
   name: string;
@@ -124,6 +149,15 @@ export type RenderedSubscription = {
 export type XrayPreview = {
   content: string;
   summary: string;
+};
+
+export type XraySnapshotRecord = {
+  id: string;
+  targetKind: string;
+  targetId: string;
+  config: string;
+  summary: string;
+  createdAt: string;
 };
 
 export type RemoteServerRecord = {
@@ -152,6 +186,24 @@ export type RemoteTaskRecord = {
   outputText: string;
   createdAt: string;
   updatedAt: string;
+};
+
+export type RemoteTaskLogRecord = {
+  id: string;
+  remoteTaskId: string;
+  remoteServerId: string;
+  eventKind: string;
+  message: string;
+  createdAt: string;
+};
+
+export type AgentLogRecord = {
+  id: string;
+  remoteServerId: string;
+  level: string;
+  message: string;
+  metadata: Record<string, unknown>;
+  createdAt: string;
 };
 
 export type ProxyGroupRecord = {
@@ -248,6 +300,8 @@ export type AppBootstrap = {
   nodes: NodeRecord[];
   ruleSets: RuleSetRecord[];
   subscriptions: SubscriptionRecord[];
+  packages: PackageRecord[];
+  entitlements: EntitlementRecord[];
   remoteServers: RemoteServerRecord[];
   proxyGroups: ProxyGroupRecord[];
   dnsProviders: DNSProviderRecord[];
@@ -256,6 +310,7 @@ export type AppBootstrap = {
   backups: BackupRecord[];
   systemSettings: SystemSettingRecord[];
   trafficSamples: TrafficSampleRecord[];
+  xraySnapshots: XraySnapshotRecord[];
   users: UserRecord[];
 };
 
@@ -322,6 +377,8 @@ export async function loadWorkspace(): Promise<AppBootstrap> {
     nodes,
     ruleSets,
     subscriptions,
+    packages,
+    entitlements,
     remoteServers,
     proxyGroups,
     dnsProviders,
@@ -330,6 +387,7 @@ export async function loadWorkspace(): Promise<AppBootstrap> {
     backups,
     systemSettings,
     trafficSamples,
+    xraySnapshots,
   ] = await Promise.all([
     fetchJSON<ModuleCard[]>("/api/v1/catalog/modules"),
     fetchJSON<DashboardSummary>("/api/v1/dashboard/summary"),
@@ -338,6 +396,8 @@ export async function loadWorkspace(): Promise<AppBootstrap> {
     fetchJSON<NodeRecord[]>("/api/v1/nodes"),
     fetchJSON<RuleSetRecord[]>("/api/v1/rulesets"),
     fetchJSON<SubscriptionRecord[]>("/api/v1/subscriptions"),
+    fetchJSON<PackageRecord[]>("/api/v1/packages"),
+    fetchJSON<EntitlementRecord[]>("/api/v1/entitlements"),
     fetchJSON<RemoteServerRecord[]>("/api/v1/remote/servers"),
     fetchJSON<ProxyGroupRecord[]>("/api/v1/proxy-groups"),
     fetchJSON<DNSProviderRecord[]>("/api/v1/dns/providers"),
@@ -346,6 +406,7 @@ export async function loadWorkspace(): Promise<AppBootstrap> {
     fetchJSON<BackupRecord[]>("/api/v1/backups"),
     fetchJSON<SystemSettingRecord[]>("/api/v1/system/settings"),
     fetchJSON<TrafficSampleRecord[]>("/api/v1/traffic/samples"),
+    fetchJSON<XraySnapshotRecord[]>("/api/v1/xray/snapshots"),
   ]);
   const users = authToken ? await fetchJSON<UserRecord[]>("/api/v1/users") : [];
 
@@ -357,6 +418,8 @@ export async function loadWorkspace(): Promise<AppBootstrap> {
     nodes,
     ruleSets,
     subscriptions,
+    packages,
+    entitlements,
     remoteServers,
     proxyGroups,
     dnsProviders,
@@ -365,6 +428,7 @@ export async function loadWorkspace(): Promise<AppBootstrap> {
     backups,
     systemSettings,
     trafficSamples,
+    xraySnapshots,
     users,
   };
 }
@@ -520,6 +584,46 @@ export function deleteSubscription(id: string) {
   });
 }
 
+export function createPackage(input: {
+  name: string;
+  description: string;
+  bandwidthBytes: number;
+  deviceLimit: number;
+  durationDays: number;
+  features: string[];
+  enabled: boolean;
+}) {
+  return fetchJSON<PackageRecord>("/api/v1/packages", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function deletePackage(id: string) {
+  return fetchJSON<void>(`/api/v1/packages/${id}`, {
+    method: "DELETE",
+  });
+}
+
+export function createEntitlement(input: {
+  userId: string;
+  packageId: string;
+  status: string;
+  expiresAt: string;
+  metadata: Record<string, unknown>;
+}) {
+  return fetchJSON<EntitlementRecord>("/api/v1/entitlements", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function deleteEntitlement(id: string) {
+  return fetchJSON<void>(`/api/v1/entitlements/${id}`, {
+    method: "DELETE",
+  });
+}
+
 export function previewSubscription(id: string) {
   return fetchJSON<RenderedSubscription>(`/api/v1/subscriptions/${id}/preview`);
 }
@@ -530,6 +634,20 @@ export function subscriptionDownloadURL(id: string) {
 
 export function previewXray() {
   return fetchJSON<XrayPreview>("/api/v1/xray/preview");
+}
+
+export function saveXraySnapshot(input: { targetKind: string; targetId: string }) {
+  return fetchJSON<XraySnapshotRecord>("/api/v1/xray/snapshots", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function restoreXraySnapshot(id: string) {
+  return fetchJSON<XraySnapshotRecord>(`/api/v1/xray/snapshots/${id}/restore`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
 }
 
 export function createRemoteServer(input: {
@@ -581,6 +699,14 @@ export function createRemoteTask(
     method: "POST",
     body: JSON.stringify(input),
   });
+}
+
+export function listRemoteTaskLogs(serverId: string, taskId: string) {
+  return fetchJSON<RemoteTaskLogRecord[]>(`/api/v1/remote/servers/${serverId}/tasks/${taskId}/logs`);
+}
+
+export function listAgentLogs(serverId: string) {
+  return fetchJSON<AgentLogRecord[]>(`/api/v1/remote/servers/${serverId}/logs`);
 }
 
 export function createProxyGroup(input: {

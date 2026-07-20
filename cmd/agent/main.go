@@ -111,6 +111,10 @@ func claimAndRun(client *http.Client, cfg agentConfig) error {
 
 	task := *claim.Task
 	log.Printf("claimed task %s (%s)", task.ID, task.TaskKind)
+	_ = sendAgentLog(client, cfg, "info", "claimed task "+task.ID+" ("+task.TaskKind+")", map[string]any{
+		"taskId":   task.ID,
+		"taskKind": task.TaskKind,
+	})
 
 	output, err := runTask(cfg, task)
 	status := "succeeded"
@@ -122,12 +126,30 @@ func claimAndRun(client *http.Client, cfg agentConfig) error {
 			output += "\n" + err.Error()
 		}
 	}
+	logLevel := "info"
+	if status == "failed" {
+		logLevel = "error"
+	}
+	_ = sendAgentLog(client, cfg, logLevel, "task "+task.ID+" "+status, map[string]any{
+		"taskId":   task.ID,
+		"taskKind": task.TaskKind,
+		"output":   output,
+	})
 
 	update := map[string]any{
 		"status":     status,
 		"outputText": output,
 	}
 	return postJSON(client, cfg, "/api/v1/agent/tasks/"+task.ID, update, nil)
+}
+
+func sendAgentLog(client *http.Client, cfg agentConfig, level string, message string, metadata map[string]any) error {
+	payload := map[string]any{
+		"level":    level,
+		"message":  message,
+		"metadata": metadata,
+	}
+	return postJSON(client, cfg, "/api/v1/agent/logs", payload, nil)
 }
 
 func runTask(cfg agentConfig, task remoteTask) (string, error) {

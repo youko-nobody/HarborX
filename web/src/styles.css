@@ -599,6 +599,34 @@ textarea {
   margin-top: 6px;
 }
 
+.log-list {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 16px;
+  background: rgba(24, 34, 35, 0.06);
+  border: 1px solid var(--line);
+}
+
+.log-row {
+  display: grid;
+  grid-template-columns: 72px 1fr auto;
+  gap: 10px;
+  align-items: start;
+  font-size: 12px;
+}
+
+.log-row span {
+  color: var(--highlight);
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.log-row code {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 1024px) {
   .shell {
     grid-template-columns: 1fr;

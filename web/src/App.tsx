@@ -1,6 +1,8 @@
 import { useState, type FormEvent, type ReactNode } from "react";
 import {
+  listAgentLogs,
   listRemoteTasks,
+  listRemoteTaskLogs,
   previewSubscription,
   previewXray,
   getAuthToken,
@@ -8,8 +10,10 @@ import {
   setAuthToken,
   subscriptionDownloadURL,
   type AuthUser,
+  type AgentLogRecord,
   type RemoteServerEnrollment,
   type RemoteTaskRecord,
+  type RemoteTaskLogRecord,
   validateRuleSet,
   type RenderedSubscription,
   type RuleRecord,
@@ -56,7 +60,11 @@ export function App() {
     updateRuleSet,
     deleteRuleSet,
     createSubscription,
+    createPackage,
+    createEntitlement,
     deleteSubscription,
+    deletePackage,
+    deleteEntitlement,
     createTemplate,
     deleteTemplate,
     deleteNode,
@@ -64,6 +72,8 @@ export function App() {
     updateRemoteServer,
     deleteRemoteServer,
     createRemoteTask,
+    saveXraySnapshot,
+    restoreXraySnapshot,
     createProxyGroup,
     deleteProxyGroup,
     createDNSProvider,
@@ -89,6 +99,8 @@ export function App() {
   const nodes = data?.nodes ?? [];
   const ruleSets = data?.ruleSets ?? [];
   const subscriptions = data?.subscriptions ?? [];
+  const packages = data?.packages ?? [];
+  const entitlements = data?.entitlements ?? [];
   const remoteServers = data?.remoteServers ?? [];
   const proxyGroups = data?.proxyGroups ?? [];
   const dnsProviders = data?.dnsProviders ?? [];
@@ -97,6 +109,7 @@ export function App() {
   const backups = data?.backups ?? [];
   const systemSettings = data?.systemSettings ?? [];
   const trafficSamples = data?.trafficSamples ?? [];
+  const xraySnapshots = data?.xraySnapshots ?? [];
   const users = data?.users ?? [];
   const ruleTypes = data?.rules.ruleTypes ?? [];
 
@@ -125,6 +138,15 @@ export function App() {
   const [subscriptionFormat, setSubscriptionFormat] = useState("clash-meta");
   const [subscriptionTemplateId, setSubscriptionTemplateId] = useState("private-base-template");
   const [subscriptionSources, setSubscriptionSources] = useState("manual");
+  const [packageName, setPackageName] = useState("Personal Unlimited");
+  const [packageDescription, setPackageDescription] = useState("Private package without pro or license gates.");
+  const [packageBandwidth, setPackageBandwidth] = useState("1099511627776");
+  const [packageDevices, setPackageDevices] = useState("5");
+  const [packageDuration, setPackageDuration] = useState("30");
+  const [packageFeatures, setPackageFeatures] = useState("all-features,xray,subscriptions,remote-agent");
+  const [entitlementUserId, setEntitlementUserId] = useState("local-admin");
+  const [entitlementPackageId, setEntitlementPackageId] = useState("");
+  const [entitlementExpiresAt, setEntitlementExpiresAt] = useState("");
   const [renderedSubscription, setRenderedSubscription] = useState<RenderedSubscription | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [xrayPreview, setXrayPreview] = useState<XrayPreview | null>(null);
@@ -139,6 +161,8 @@ export function App() {
   const [remoteTags, setRemoteTags] = useState("edge,xray");
   const [remoteEnrollment, setRemoteEnrollment] = useState<RemoteServerEnrollment | null>(null);
   const [remoteTasks, setRemoteTasks] = useState<Record<string, RemoteTaskRecord[]>>({});
+  const [remoteAgentLogs, setRemoteAgentLogs] = useState<Record<string, AgentLogRecord[]>>({});
+  const [remoteTaskLogs, setRemoteTaskLogs] = useState<Record<string, RemoteTaskLogRecord[]>>({});
   const [remoteTaskKind, setRemoteTaskKind] = useState("reload-config");
   const [remoteTaskPayload, setRemoteTaskPayload] = useState('{"service":"xray"}');
   const [remoteError, setRemoteError] = useState<string | null>(null);
@@ -160,6 +184,7 @@ export function App() {
   const [trafficRX, setTrafficRX] = useState("0");
   const [trafficTX, setTrafficTX] = useState("0");
   const [opsError, setOpsError] = useState<string | null>(null);
+  const [restoredSnapshot, setRestoredSnapshot] = useState<string | null>(null);
   const [newUsername, setNewUsername] = useState("member");
   const [newUserPassword, setNewUserPassword] = useState("");
   const [newUserDisplayName, setNewUserDisplayName] = useState("Member");
@@ -323,6 +348,34 @@ export function App() {
     });
   }
 
+  async function handleCreatePackage(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await runOps(() =>
+      createPackage({
+        name: packageName,
+        description: packageDescription,
+        bandwidthBytes: Number(packageBandwidth),
+        deviceLimit: Number(packageDevices),
+        durationDays: Number(packageDuration),
+        features: splitCSV(packageFeatures),
+        enabled: true,
+      }),
+    );
+  }
+
+  async function handleCreateEntitlement(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await runOps(() =>
+      createEntitlement({
+        userId: entitlementUserId,
+        packageId: entitlementPackageId || packages[0]?.id || "",
+        status: "active",
+        expiresAt: entitlementExpiresAt,
+        metadata: {},
+      }),
+    );
+  }
+
   async function handlePreviewSubscription(id: string) {
     setPreviewError(null);
     try {
@@ -338,6 +391,26 @@ export function App() {
       setXrayPreview(await previewXray());
     } catch (error) {
       setXrayError(error instanceof Error ? error.message : "Failed to preview Xray config");
+    }
+  }
+
+  async function handleSaveXraySnapshot() {
+    setXrayError(null);
+    try {
+      await saveXraySnapshot({ targetKind: "local", targetId: "default" });
+      await refresh();
+    } catch (error) {
+      setXrayError(error instanceof Error ? error.message : "Failed to save Xray snapshot");
+    }
+  }
+
+  async function handleRestoreXraySnapshot(id: string) {
+    setXrayError(null);
+    try {
+      const snapshot = await restoreXraySnapshot(id);
+      setRestoredSnapshot(snapshot.config);
+    } catch (error) {
+      setXrayError(error instanceof Error ? error.message : "Failed to restore Xray snapshot");
     }
   }
 
@@ -381,6 +454,32 @@ export function App() {
       setRemoteTasks((current) => ({ ...current, [serverId]: items }));
     } catch (error) {
       setRemoteError(error instanceof Error ? error.message : "Failed to load remote tasks");
+    }
+  }
+
+  async function handleLoadRemoteLogs(serverId: string) {
+    setRemoteError(null);
+    try {
+      const [agentLogs, taskLogs] = await Promise.all([
+        listAgentLogs(serverId),
+        remoteTasks[serverId]?.[0]?.id ? listRemoteTaskLogs(serverId, remoteTasks[serverId][0].id) : Promise.resolve([]),
+      ]);
+      setRemoteAgentLogs((current) => ({ ...current, [serverId]: agentLogs }));
+      if (remoteTasks[serverId]?.[0]?.id) {
+        setRemoteTaskLogs((current) => ({ ...current, [serverId]: taskLogs }));
+      }
+    } catch (error) {
+      setRemoteError(error instanceof Error ? error.message : "Failed to load remote logs");
+    }
+  }
+
+  async function handleLoadRemoteTaskLogs(serverId: string, taskId: string) {
+    setRemoteError(null);
+    try {
+      const items = await listRemoteTaskLogs(serverId, taskId);
+      setRemoteTaskLogs((current) => ({ ...current, [`${serverId}:${taskId}`]: items }));
+    } catch (error) {
+      setRemoteError(error instanceof Error ? error.message : "Failed to load remote task logs");
     }
   }
 
@@ -1032,6 +1131,63 @@ export function App() {
               </div>
             ) : null}
           </article>
+
+          <article className="panel">
+            <div className="panel-head">
+              <div>
+                <p className="eyebrow">Packages</p>
+                <h3>Plans and user entitlements</h3>
+              </div>
+            </div>
+            <form className="stack-form" onSubmit={(event) => void handleCreatePackage(event)}>
+              <input value={packageName} onChange={(event) => setPackageName(event.target.value)} />
+              <input value={packageDescription} onChange={(event) => setPackageDescription(event.target.value)} />
+              <div className="inline-form">
+                <input value={packageBandwidth} onChange={(event) => setPackageBandwidth(event.target.value)} placeholder="bytes" />
+                <input value={packageDevices} onChange={(event) => setPackageDevices(event.target.value)} placeholder="devices" />
+              </div>
+              <input value={packageDuration} onChange={(event) => setPackageDuration(event.target.value)} placeholder="duration days" />
+              <input value={packageFeatures} onChange={(event) => setPackageFeatures(event.target.value)} placeholder="features" />
+              <button type="submit">Create package</button>
+            </form>
+
+            <form className="stack-form" onSubmit={(event) => void handleCreateEntitlement(event)}>
+              <select value={entitlementUserId} onChange={(event) => setEntitlementUserId(event.target.value)}>
+                {[{ id: "local-admin", username: "local-admin" }, ...users.filter((user) => user.id !== "local-admin")].map((user) => (
+                  <option key={user.id} value={user.id}>
+                    {user.username}
+                  </option>
+                ))}
+              </select>
+              <select value={entitlementPackageId} onChange={(event) => setEntitlementPackageId(event.target.value)}>
+                <option value="">Select package</option>
+                {packages.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.name}
+                  </option>
+                ))}
+              </select>
+              <input value={entitlementExpiresAt} onChange={(event) => setEntitlementExpiresAt(event.target.value)} placeholder="expires at, optional" />
+              <button type="submit">Bind entitlement</button>
+            </form>
+
+            <MiniList
+              items={packages.map((item) => ({
+                id: item.id,
+                title: item.name,
+                subtitle: `${item.deviceLimit} devices / ${formatBytes(item.bandwidthBytes)} / ${item.durationDays} days`,
+              }))}
+              onDelete={(id) => void runOps(() => deletePackage(id))}
+            />
+            <MiniList
+              items={entitlements.map((item) => ({
+                id: item.id,
+                title: `${item.userId} -> ${packages.find((pkg) => pkg.id === item.packageId)?.name ?? item.packageId}`,
+                subtitle: `${item.status}${item.expiresAt ? ` until ${item.expiresAt}` : ""}`,
+              }))}
+              onDelete={(id) => void runOps(() => deleteEntitlement(id))}
+            />
+          </article>
         </section>
 
         <section className="remote-layout">
@@ -1146,6 +1302,9 @@ export function App() {
                     <button type="button" className="ghost-button" onClick={() => void handleLoadRemoteTasks(server.id)}>
                       Load tasks
                     </button>
+                    <button type="button" className="ghost-button" onClick={() => void handleLoadRemoteLogs(server.id)}>
+                      Load logs
+                    </button>
                     <button type="button" className="ghost-button" onClick={() => void deleteRemoteServer(server.id)}>
                       Delete
                     </button>
@@ -1158,8 +1317,40 @@ export function App() {
                           <span>{task.status}</span>
                           <code>{task.taskKind}</code>
                           <small>{task.createdAt}</small>
+                          <button type="button" className="ghost-button" onClick={() => void handleLoadRemoteTaskLogs(server.id, task.id)}>
+                            Logs
+                          </button>
                         </div>
                       ))}
+                    </div>
+                  ) : null}
+
+                  {remoteAgentLogs[server.id]?.length ? (
+                    <div className="log-list">
+                      <strong>Agent logs</strong>
+                      {remoteAgentLogs[server.id].slice(0, 6).map((logItem) => (
+                        <div className="log-row" key={logItem.id}>
+                          <span>{logItem.level}</span>
+                          <code>{logItem.message}</code>
+                          <small>{logItem.createdAt}</small>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+
+                  {remoteTasks[server.id]?.flatMap((task) => remoteTaskLogs[`${server.id}:${task.id}`] ?? []).length ? (
+                    <div className="log-list">
+                      <strong>Task logs</strong>
+                      {remoteTasks[server.id]
+                        .flatMap((task) => remoteTaskLogs[`${server.id}:${task.id}`] ?? [])
+                        .slice(0, 8)
+                        .map((logItem) => (
+                          <div className="log-row" key={logItem.id}>
+                            <span>{logItem.eventKind}</span>
+                            <code>{logItem.message || logItem.remoteTaskId}</code>
+                            <small>{logItem.createdAt}</small>
+                          </div>
+                        ))}
                     </div>
                   ) : null}
                 </div>
@@ -1321,11 +1512,28 @@ export function App() {
               <p className="eyebrow">Xray</p>
               <h3>Configuration preview</h3>
             </div>
-            <button type="button" onClick={() => void handlePreviewXray()}>
-              Preview Xray config
-            </button>
+            <div className="action-row">
+              <button type="button" onClick={() => void handlePreviewXray()}>
+                Preview Xray config
+              </button>
+              <button type="button" className="ghost-button" onClick={() => void handleSaveXraySnapshot()}>
+                Save snapshot
+              </button>
+            </div>
           </div>
           {xrayError ? <p className="status error">{xrayError}</p> : null}
+          <MiniList
+            items={xraySnapshots.map((item) => ({
+              id: item.id,
+              title: item.summary || item.targetId,
+              subtitle: `${item.targetKind}/${item.targetId} ${item.createdAt}`,
+            }))}
+            renderActions={(item) => (
+              <button type="button" className="ghost-button" onClick={() => void handleRestoreXraySnapshot(item.id)}>
+                Restore preview
+              </button>
+            )}
+          />
           {xrayPreview ? (
             <div className="preview-box">
               <div className="entity-head">
@@ -1333,6 +1541,15 @@ export function App() {
                 <span>json</span>
               </div>
               <pre>{xrayPreview.content}</pre>
+            </div>
+          ) : null}
+          {restoredSnapshot ? (
+            <div className="preview-box">
+              <div className="entity-head">
+                <strong>Restored snapshot content</strong>
+                <span>rollback</span>
+              </div>
+              <pre>{restoredSnapshot}</pre>
             </div>
           ) : null}
         </section>
@@ -1388,4 +1605,18 @@ function parseJSONObject(input: string): Record<string, unknown> {
     throw new Error("Payload must be a JSON object");
   }
   return parsed as Record<string, unknown>;
+}
+
+function formatBytes(value: number) {
+  if (!Number.isFinite(value) || value <= 0) {
+    return "unlimited";
+  }
+  const units = ["B", "KB", "MB", "GB", "TB", "PB"];
+  let current = value;
+  let unitIndex = 0;
+  while (current >= 1024 && unitIndex < units.length - 1) {
+    current /= 1024;
+    unitIndex += 1;
+  }
+  return `${current.toFixed(current >= 10 ? 0 : 1)} ${units[unitIndex]}`;
 }

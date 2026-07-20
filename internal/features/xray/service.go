@@ -18,6 +18,9 @@ type Summary struct {
 type Repository interface {
 	ListNodes() ([]nodes.Node, error)
 	ListRuleSets() ([]rules.RuleSet, error)
+	ListXRAYSnapshots(targetKind string, targetID string) ([]Snapshot, error)
+	CreateXRAYSnapshot(input SnapshotInput) (Snapshot, error)
+	GetXRAYSnapshot(id string) (Snapshot, error)
 }
 
 type Service struct {
@@ -30,7 +33,7 @@ func NewService(repo Repository) Service {
 
 func (Service) Summary() Summary {
 	return Summary{
-		Capabilities: []string{"render-config", "preview-diff", "snapshot-history", "apply-plan"},
+		Capabilities: []string{"render-config", "preview-diff", "snapshot-history", "apply-plan", "rollback"},
 		SnapshotMode: "sqlite-and-filesystem",
 	}
 }
@@ -38,6 +41,22 @@ func (Service) Summary() Summary {
 type Preview struct {
 	Content string `json:"content"`
 	Summary string `json:"summary"`
+}
+
+type Snapshot struct {
+	ID         string `json:"id"`
+	TargetKind string `json:"targetKind"`
+	TargetID   string `json:"targetId"`
+	Config     string `json:"config"`
+	Summary    string `json:"summary"`
+	CreatedAt  string `json:"createdAt"`
+}
+
+type SnapshotInput struct {
+	TargetKind string `json:"targetKind"`
+	TargetID   string `json:"targetId"`
+	Config     string `json:"config"`
+	Summary    string `json:"summary"`
 }
 
 type xrayConfig struct {
@@ -125,6 +144,39 @@ func (s Service) Preview() (Preview, error) {
 			len(config.Routing.Rules),
 		),
 	}, nil
+}
+
+func (s Service) ListSnapshots(targetKind string, targetID string) ([]Snapshot, error) {
+	if s.repo == nil {
+		return nil, errors.New("xray repository is not configured")
+	}
+	return s.repo.ListXRAYSnapshots(targetKind, targetID)
+}
+
+func (s Service) SaveSnapshot(targetKind string, targetID string) (Snapshot, error) {
+	if s.repo == nil {
+		return Snapshot{}, errors.New("xray repository is not configured")
+	}
+	preview, err := s.Preview()
+	if err != nil {
+		return Snapshot{}, err
+	}
+	return s.repo.CreateXRAYSnapshot(SnapshotInput{
+		TargetKind: targetKind,
+		TargetID:   targetID,
+		Config:     preview.Content,
+		Summary:    preview.Summary,
+	})
+}
+
+func (s Service) RestoreSnapshot(id string) (Snapshot, error) {
+	if s.repo == nil {
+		return Snapshot{}, errors.New("xray repository is not configured")
+	}
+	if id == "" {
+		return Snapshot{}, errors.New("xray snapshot id is required")
+	}
+	return s.repo.GetXRAYSnapshot(id)
 }
 
 func buildOutbounds(items []nodes.Node) []xrayOutbound {

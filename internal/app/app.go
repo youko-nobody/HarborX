@@ -12,6 +12,7 @@ import (
 	"harborx/internal/features/dns"
 	"harborx/internal/features/nodes"
 	"harborx/internal/features/notifications"
+	"harborx/internal/features/packages"
 	"harborx/internal/features/proxygroups"
 	"harborx/internal/features/remote"
 	"harborx/internal/features/rules"
@@ -52,6 +53,7 @@ func New() (App, error) {
 	certificatesService := certificates.NewService(store)
 	dnsService := dns.NewService(store)
 	notificationsService := notifications.NewService(store)
+	packagesService := packages.NewService(store)
 	backupsService := backups.NewService(store, cfg.DataDir)
 	systemService := system.NewService(store)
 
@@ -71,6 +73,7 @@ func New() (App, error) {
 		Certificates:  certificatesService,
 		DNS:           dnsService,
 		Notifications: notificationsService,
+		Packages:      packagesService,
 		Backups:       backupsService,
 		System:        systemService,
 		WebDistDir:    cfg.WebDistDir,
