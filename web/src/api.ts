@@ -72,6 +72,28 @@ export type RuleSetRecord = {
   rules: RuleRecord[];
 };
 
+export type RuleSetInput = {
+  name: string;
+  scope: string;
+  description: string;
+  rules: Array<{
+    ruleType: string;
+    pattern: string;
+    policy: string;
+    sortOrder: number;
+    enabled: boolean;
+    note: string;
+  }>;
+};
+
+export type ValidationResult = {
+  valid: boolean;
+  issues: Array<{
+    path: string;
+    message: string;
+  }>;
+};
+
 export type SubscriptionRecord = {
   id: string;
   name: string;
@@ -92,6 +114,11 @@ export type RenderedSubscription = {
   content: string;
   fileName: string;
   contentType: string;
+};
+
+export type XrayPreview = {
+  content: string;
+  summary: string;
 };
 
 export type AppBootstrap = {
@@ -168,20 +195,28 @@ export function deleteNode(id: string) {
   });
 }
 
-export function createRuleSet(input: {
-  name: string;
-  scope: string;
-  description: string;
-  rules: Array<{
-    ruleType: string;
-    pattern: string;
-    policy: string;
-    sortOrder: number;
-    enabled: boolean;
-    note: string;
-  }>;
-}) {
+export function createRuleSet(input: RuleSetInput) {
   return fetchJSON<RuleSetRecord>("/api/v1/rulesets", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function updateRuleSet(id: string, input: RuleSetInput) {
+  return fetchJSON<RuleSetRecord>(`/api/v1/rulesets/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(input),
+  });
+}
+
+export function deleteRuleSet(id: string) {
+  return fetchJSON<void>(`/api/v1/rulesets/${id}`, {
+    method: "DELETE",
+  });
+}
+
+export function validateRuleSet(input: RuleSetInput) {
+  return fetchJSON<ValidationResult>("/api/v1/rulesets/validate", {
     method: "POST",
     body: JSON.stringify(input),
   });
@@ -220,4 +255,8 @@ export function previewSubscription(id: string) {
 
 export function subscriptionDownloadURL(id: string) {
   return `/api/v1/subscriptions/${id}/download`;
+}
+
+export function previewXray() {
+  return fetchJSON<XrayPreview>("/api/v1/xray/preview");
 }

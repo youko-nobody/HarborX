@@ -1,5 +1,14 @@
 import { useState, type FormEvent } from "react";
-import { previewSubscription, subscriptionDownloadURL, type RenderedSubscription } from "./api";
+import {
+  previewSubscription,
+  previewXray,
+  subscriptionDownloadURL,
+  validateRuleSet,
+  type RenderedSubscription,
+  type RuleRecord,
+  type RuleSetInput,
+  type XrayPreview,
+} from "./api";
 import { useWorkspaceData } from "./useWorkspaceData";
 
 const outputFormats = [
@@ -14,9 +23,32 @@ const outputFormats = [
   "v2ray",
 ];
 
+type DraftRule = Omit<RuleRecord, "id"> & { id: string };
+
+const emptyDraftRule = (): DraftRule => ({
+  id: crypto.randomUUID(),
+  ruleType: "DOMAIN-SUFFIX",
+  pattern: "google.com",
+  policy: "Proxy",
+  sortOrder: 1,
+  enabled: true,
+  note: "",
+});
+
 export function App() {
-  const { data, loading, error, busy, createNode, createRuleSet, createSubscription, createTemplate, deleteNode } =
-    useWorkspaceData();
+  const {
+    data,
+    loading,
+    error,
+    busy,
+    createNode,
+    createRuleSet,
+    updateRuleSet,
+    deleteRuleSet,
+    createSubscription,
+    createTemplate,
+    deleteNode,
+  } = useWorkspaceData();
   const modules = data?.modules ?? [];
   const starterRules = data?.rules.defaultRules ?? [];
   const policyOptions = data?.rules.policies ?? [];
@@ -33,9 +65,10 @@ export function App() {
   const [nodeTags, setNodeTags] = useState("");
 
   const [ruleSetName, setRuleSetName] = useState("Default Route Set");
-  const [rulePattern, setRulePattern] = useState("google.com");
-  const [rulePolicy, setRulePolicy] = useState("Proxy");
-  const [ruleType, setRuleType] = useState("DOMAIN-SUFFIX");
+  const [ruleSetDescription, setRuleSetDescription] = useState("Created from the HarborX operator console.");
+  const [editingRuleSetId, setEditingRuleSetId] = useState<string | null>(null);
+  const [draftRules, setDraftRules] = useState<DraftRule[]>([emptyDraftRule()]);
+  const [ruleValidation, setRuleValidation] = useState<string | null>(null);
 
   const [templateName, setTemplateName] = useState("Private Mobile Template");
   const [templateDescription, setTemplateDescription] = useState("Your own working template variant.");
@@ -50,6 +83,8 @@ export function App() {
   const [subscriptionSources, setSubscriptionSources] = useState("manual");
   const [renderedSubscription, setRenderedSubscription] = useState<RenderedSubscription | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
+  const [xrayPreview, setXrayPreview] = useState<XrayPreview | null>(null);
+  const [xrayError, setXrayError] = useState<string | null>(null);
 
   async function handleCreateNode(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -71,20 +106,79 @@ export function App() {
 
   async function handleCreateRuleSet(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    await createRuleSet({
+    const input = buildRuleSetInput();
+    const validation = await validateRuleSet(input);
+    if (!validation.valid) {
+      setRuleValidation(validation.issues.map((issue) => `${issue.path}: ${issue.message}`).join("\n"));
+      return;
+    }
+    setRuleValidation(null);
+    if (editingRuleSetId) {
+      await updateRuleSet(editingRuleSetId, input);
+      resetRuleEditor();
+      return;
+    }
+    await createRuleSet(input);
+  }
+
+  function buildRuleSetInput(): RuleSetInput {
+    return {
       name: ruleSetName,
       scope: "global",
-      description: "Created from the HarborX operator console.",
-      rules: [
-        {
-          ruleType,
-          pattern: ruleType === "MATCH" ? "" : rulePattern,
-          policy: rulePolicy,
-          sortOrder: 1,
-          enabled: true,
-          note: "Created from the web form",
-        },
-      ],
+      description: ruleSetDescription,
+      rules: draftRules.map((rule, index) => ({
+        ruleType: rule.ruleType,
+        pattern: rule.ruleType === "MATCH" ? "" : rule.pattern,
+        policy: rule.policy,
+        sortOrder: index + 1,
+        enabled: rule.enabled,
+        note: rule.note,
+      })),
+    };
+  }
+
+  function resetRuleEditor() {
+    setEditingRuleSetId(null);
+    setRuleSetName("Default Route Set");
+    setRuleSetDescription("Created from the HarborX operator console.");
+    setDraftRules([emptyDraftRule()]);
+    setRuleValidation(null);
+  }
+
+  function editRuleSet(item: { id: string; name: string; description: string; rules: RuleRecord[] }) {
+    setEditingRuleSetId(item.id);
+    setRuleSetName(item.name);
+    setRuleSetDescription(item.description);
+    setDraftRules(
+      item.rules.length
+        ? item.rules.map((rule) => ({ ...rule, id: rule.id || crypto.randomUUID() }))
+        : [emptyDraftRule()],
+    );
+    setRuleValidation(null);
+  }
+
+  function updateDraftRule(id: string, patch: Partial<DraftRule>) {
+    setDraftRules((current) => current.map((rule) => (rule.id === id ? { ...rule, ...patch } : rule)));
+  }
+
+  function moveDraftRule(id: string, direction: -1 | 1) {
+    setDraftRules((current) => {
+      const index = current.findIndex((rule) => rule.id === id);
+      const nextIndex = index + direction;
+      if (index < 0 || nextIndex < 0 || nextIndex >= current.length) {
+        return current;
+      }
+      const copied = [...current];
+      const [item] = copied.splice(index, 1);
+      copied.splice(nextIndex, 0, item);
+      return copied.map((rule, ruleIndex) => ({ ...rule, sortOrder: ruleIndex + 1 }));
+    });
+  }
+
+  function removeDraftRule(id: string) {
+    setDraftRules((current) => {
+      const filtered = current.filter((rule) => rule.id !== id);
+      return (filtered.length ? filtered : [emptyDraftRule()]).map((rule, index) => ({ ...rule, sortOrder: index + 1 }));
     });
   }
 
@@ -117,6 +211,15 @@ export function App() {
       setRenderedSubscription(await previewSubscription(id));
     } catch (error) {
       setPreviewError(error instanceof Error ? error.message : "Failed to render subscription");
+    }
+  }
+
+  async function handlePreviewXray() {
+    setXrayError(null);
+    try {
+      setXrayPreview(await previewXray());
+    } catch (error) {
+      setXrayError(error instanceof Error ? error.message : "Failed to preview Xray config");
     }
   }
 
@@ -238,6 +341,14 @@ export function App() {
                         </div>
                       ))}
                     </div>
+                    <div className="action-row">
+                      <button type="button" className="ghost-button" onClick={() => editRuleSet(item)}>
+                        Edit
+                      </button>
+                      <button type="button" className="ghost-button" onClick={() => void deleteRuleSet(item.id)}>
+                        Delete
+                      </button>
+                    </div>
                   </div>
                 ))
               ) : (
@@ -255,7 +366,7 @@ export function App() {
             <div className="panel-head">
               <div>
                 <p className="eyebrow">Rule Form</p>
-                <h3>Create the first saved rule set</h3>
+                <h3>{editingRuleSetId ? "Edit saved rule set" : "Create a saved rule set"}</h3>
               </div>
             </div>
 
@@ -264,44 +375,75 @@ export function App() {
                 Rule set name
                 <input value={ruleSetName} onChange={(event) => setRuleSetName(event.target.value)} />
               </label>
-
               <label>
-                Rule type
-                <select value={ruleType} onChange={(event) => setRuleType(event.target.value)}>
-                  {ruleTypes.map((value) => (
-                    <option key={value.key} value={value.key}>
-                      {value.key}
-                    </option>
-                  ))}
-                </select>
+                Description
+                <textarea value={ruleSetDescription} onChange={(event) => setRuleSetDescription(event.target.value)} />
               </label>
 
-              <label>
-                Pattern
-                <input
-                  value={rulePattern}
-                  onChange={(event) => setRulePattern(event.target.value)}
-                  placeholder={ruleTypes.find((item) => item.key === ruleType)?.patternHint ?? ""}
-                />
-              </label>
+              <div className="draft-rule-list">
+                {draftRules.map((rule, index) => (
+                  <div className="draft-rule" key={rule.id}>
+                    <div className="entity-head">
+                      <strong>Rule {index + 1}</strong>
+                      <span>{rule.enabled ? "enabled" : "disabled"}</span>
+                    </div>
+                    <select value={rule.ruleType} onChange={(event) => updateDraftRule(rule.id, { ruleType: event.target.value })}>
+                      {ruleTypes.map((value) => (
+                        <option key={value.key} value={value.key}>
+                          {value.key}
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      value={rule.pattern}
+                      disabled={rule.ruleType === "MATCH"}
+                      onChange={(event) => updateDraftRule(rule.id, { pattern: event.target.value })}
+                      placeholder={ruleTypes.find((item) => item.key === rule.ruleType)?.patternHint ?? ""}
+                    />
+                    <select value={rule.policy} onChange={(event) => updateDraftRule(rule.id, { policy: event.target.value })}>
+                      {policyOptions.map((value) => (
+                        <option key={value} value={value}>
+                          {value}
+                        </option>
+                      ))}
+                    </select>
+                    <input value={rule.note} onChange={(event) => updateDraftRule(rule.id, { note: event.target.value })} placeholder="note" />
+                    <label className="check-row">
+                      <input
+                        type="checkbox"
+                        checked={rule.enabled}
+                        onChange={(event) => updateDraftRule(rule.id, { enabled: event.target.checked })}
+                      />
+                      Enabled
+                    </label>
+                    <div className="action-row">
+                      <button type="button" className="ghost-button" onClick={() => moveDraftRule(rule.id, -1)}>
+                        Up
+                      </button>
+                      <button type="button" className="ghost-button" onClick={() => moveDraftRule(rule.id, 1)}>
+                        Down
+                      </button>
+                      <button type="button" className="ghost-button" onClick={() => removeDraftRule(rule.id)}>
+                        Remove
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
 
-              <label>
-                Policy
-                <select value={rulePolicy} onChange={(event) => setRulePolicy(event.target.value)}>
-                  {policyOptions.map((value) => (
-                    <option key={value} value={value}>
-                      {value}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              {ruleValidation ? <pre className="validation-box">{ruleValidation}</pre> : null}
 
-              <label>
-                Notes
-                <textarea value="This will create one persisted rule inside a rule set." readOnly />
-              </label>
-
-              <button type="submit">Save rule set</button>
+              <div className="action-row">
+                <button type="button" onClick={() => setDraftRules((current) => [...current, { ...emptyDraftRule(), sortOrder: current.length + 1 }])}>
+                  Add rule
+                </button>
+                <button type="submit">{editingRuleSetId ? "Update rule set" : "Save rule set"}</button>
+                {editingRuleSetId ? (
+                  <button type="button" className="ghost-button" onClick={resetRuleEditor}>
+                    Cancel edit
+                  </button>
+                ) : null}
+              </div>
             </form>
           </div>
         </section>
@@ -472,6 +614,28 @@ export function App() {
               </div>
             ) : null}
           </article>
+        </section>
+
+        <section className="panel">
+          <div className="panel-head">
+            <div>
+              <p className="eyebrow">Xray</p>
+              <h3>Configuration preview</h3>
+            </div>
+            <button type="button" onClick={() => void handlePreviewXray()}>
+              Preview Xray config
+            </button>
+          </div>
+          {xrayError ? <p className="status error">{xrayError}</p> : null}
+          {xrayPreview ? (
+            <div className="preview-box">
+              <div className="entity-head">
+                <strong>{xrayPreview.summary}</strong>
+                <span>json</span>
+              </div>
+              <pre>{xrayPreview.content}</pre>
+            </div>
+          ) : null}
         </section>
       </main>
     </div>

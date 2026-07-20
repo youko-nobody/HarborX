@@ -283,6 +283,122 @@ func (s *SQLiteStore) CreateRuleSet(input rules.CreateRuleSetInput) (rules.RuleS
 	return item, nil
 }
 
+func (s *SQLiteStore) UpdateRuleSet(id string, input rules.CreateRuleSetInput) (rules.RuleSet, error) {
+	if strings.TrimSpace(input.Name) == "" {
+		return rules.RuleSet{}, errors.New("rule set name is required")
+	}
+	if strings.TrimSpace(input.Scope) == "" {
+		input.Scope = "global"
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	tx, err := s.db.Begin()
+	if err != nil {
+		return rules.RuleSet{}, err
+	}
+
+	result, err := tx.Exec(`
+		UPDATE rule_sets
+		SET name = ?, scope = ?, description = ?, updated_at = ?
+		WHERE id = ?
+	`, strings.TrimSpace(input.Name), input.Scope, input.Description, now, id)
+	if err != nil {
+		_ = tx.Rollback()
+		return rules.RuleSet{}, err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		_ = tx.Rollback()
+		return rules.RuleSet{}, err
+	}
+	if rowsAffected == 0 {
+		_ = tx.Rollback()
+		return rules.RuleSet{}, errors.New("rule set not found")
+	}
+
+	if _, err := tx.Exec(`DELETE FROM rules WHERE rule_set_id = ?`, id); err != nil {
+		_ = tx.Rollback()
+		return rules.RuleSet{}, err
+	}
+
+	for index, ruleItem := range input.Rules {
+		if ruleItem.SortOrder == 0 {
+			ruleItem.SortOrder = index + 1
+		}
+		if _, err := tx.Exec(`
+			INSERT INTO rules (id, rule_set_id, rule_type, pattern, policy, sort_order, enabled, note, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`,
+			newID("rule"),
+			id,
+			ruleItem.RuleType,
+			ruleItem.Pattern,
+			ruleItem.Policy,
+			ruleItem.SortOrder,
+			boolToInt(ruleItem.Enabled),
+			ruleItem.Note,
+			now,
+			now,
+		); err != nil {
+			_ = tx.Rollback()
+			return rules.RuleSet{}, err
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return rules.RuleSet{}, err
+	}
+
+	return s.findRuleSet(id)
+}
+
+func (s *SQLiteStore) DeleteRuleSet(id string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM rules WHERE rule_set_id = ?`, id); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	result, err := tx.Exec(`DELETE FROM rule_sets WHERE id = ?`, id)
+	if err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if rowsAffected == 0 {
+		_ = tx.Rollback()
+		return errors.New("rule set not found")
+	}
+	return tx.Commit()
+}
+
+func (s *SQLiteStore) findRuleSet(id string) (rules.RuleSet, error) {
+	var item rules.RuleSet
+	err := s.db.QueryRow(`
+		SELECT id, name, scope, description, created_at, updated_at
+		FROM rule_sets
+		WHERE id = ?
+	`, id).Scan(&item.ID, &item.Name, &item.Scope, &item.Description, &item.CreatedAt, &item.UpdatedAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return rules.RuleSet{}, errors.New("rule set not found")
+		}
+		return rules.RuleSet{}, err
+	}
+	ruleItems, err := s.listRulesForRuleSet(id)
+	if err != nil {
+		return rules.RuleSet{}, err
+	}
+	item.Rules = ruleItems
+	return item, nil
+}
+
 func (s *SQLiteStore) listRulesForRuleSet(ruleSetID string) ([]rules.Rule, error) {
 	rows, err := s.db.Query(`
 		SELECT id, rule_type, pattern, policy, sort_order, enabled, note

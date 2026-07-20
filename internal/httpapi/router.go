@@ -213,6 +213,49 @@ func NewRouter(deps Dependencies) http.Handler {
 		}
 	})
 
+	mux.HandleFunc("/api/v1/rulesets/validate", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeMethodNotAllowed(w, http.MethodPost)
+			return
+		}
+		var input rules.CreateRuleSetInput
+		if err := decodeJSON(r, &input); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, deps.Rules.Validate(input))
+	})
+
+	mux.HandleFunc("/api/v1/rulesets/", func(w http.ResponseWriter, r *http.Request) {
+		id := strings.TrimPrefix(r.URL.Path, "/api/v1/rulesets/")
+		if id == "" {
+			writeError(w, http.StatusBadRequest, errors.New("rule set id is required"))
+			return
+		}
+		switch r.Method {
+		case http.MethodPut:
+			var input rules.CreateRuleSetInput
+			if err := decodeJSON(r, &input); err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			item, err := deps.Rules.UpdateRuleSet(id, input)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, item)
+		case http.MethodDelete:
+			if err := deps.Rules.DeleteRuleSet(id); err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			writeMethodNotAllowed(w, http.MethodPut, http.MethodDelete)
+		}
+	})
+
 	mux.HandleFunc("/api/v1/templates", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
@@ -245,6 +288,19 @@ func NewRouter(deps Dependencies) http.Handler {
 
 	mux.HandleFunc("/api/v1/xray/summary", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, deps.Xray.Summary())
+	})
+
+	mux.HandleFunc("/api/v1/xray/preview", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writeMethodNotAllowed(w, http.MethodGet)
+			return
+		}
+		preview, err := deps.Xray.Preview()
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, preview)
 	})
 
 	mux.HandleFunc("/api/v1/remote/summary", func(w http.ResponseWriter, r *http.Request) {

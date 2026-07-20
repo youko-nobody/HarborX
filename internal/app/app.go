@@ -46,7 +46,7 @@ func New() (App, error) {
 	rulesService := rules.NewService(store)
 	templatesService := templates.NewService(store)
 	proxyGroupsService := proxygroups.NewService()
-	xrayService := xray.NewService()
+	xrayService := xray.NewService(store)
 	remoteService := remote.NewService()
 	trafficService := traffic.NewService()
 	certificatesService := certificates.NewService()

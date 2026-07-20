@@ -5,7 +5,9 @@ import {
   createSubscription,
   createTemplate,
   deleteNode,
+  deleteRuleSet,
   loadWorkspace,
+  updateRuleSet,
   type AppBootstrap,
 } from "./api";
 
@@ -63,9 +65,11 @@ export function useWorkspaceData() {
     createNode: (input: Parameters<typeof createNode>[0]) => runMutation(() => createNode(input)),
     deleteNode: (id: string) => runMutation(() => deleteNode(id)),
     createRuleSet: (input: Parameters<typeof createRuleSet>[0]) => runMutation(() => createRuleSet(input)),
+    updateRuleSet: (id: string, input: Parameters<typeof updateRuleSet>[1]) =>
+      runMutation(() => updateRuleSet(id, input)),
+    deleteRuleSet: (id: string) => runMutation(() => deleteRuleSet(id)),
     createTemplate: (input: Parameters<typeof createTemplate>[0]) => runMutation(() => createTemplate(input)),
     createSubscription: (input: Parameters<typeof createSubscription>[0]) =>
       runMutation(() => createSubscription(input)),
   };
 }
-

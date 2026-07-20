@@ -382,6 +382,41 @@ textarea {
   margin-top: 0;
 }
 
+.draft-rule-list {
+  display: grid;
+  gap: 14px;
+}
+
+.draft-rule {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.68);
+}
+
+.check-row {
+  display: flex !important;
+  grid-template-columns: none !important;
+  align-items: center;
+  gap: 8px !important;
+  color: var(--muted);
+}
+
+.check-row input {
+  width: auto;
+}
+
+.validation-box {
+  margin: 0;
+  padding: 12px;
+  border-radius: 14px;
+  background: rgba(180, 35, 24, 0.1);
+  color: #b42318;
+  white-space: pre-wrap;
+}
+
 .template-box {
   margin-top: 20px;
   padding-top: 18px;
