@@ -3,6 +3,7 @@ package remote
 import (
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -62,6 +63,21 @@ type CreateTaskInput struct {
 	Payload  map[string]any `json:"payload"`
 }
 
+type AgentHeartbeatInput struct {
+	Status   string         `json:"status"`
+	Metadata map[string]any `json:"metadata"`
+}
+
+type AgentTaskUpdateInput struct {
+	Status     string `json:"status"`
+	OutputText string `json:"outputText"`
+}
+
+type AgentTaskClaim struct {
+	Server RemoteServer `json:"server"`
+	Task   *RemoteTask  `json:"task"`
+}
+
 type Repository interface {
 	ListRemoteServers() ([]RemoteServer, error)
 	CreateRemoteServer(input CreateServerInput, serverTokenHash string, agentTokenHash string) (RemoteServer, error)
@@ -69,6 +85,10 @@ type Repository interface {
 	DeleteRemoteServer(id string) error
 	ListRemoteTasks(serverID string) ([]RemoteTask, error)
 	CreateRemoteTask(serverID string, input CreateTaskInput) (RemoteTask, error)
+	FindRemoteServerByAgentTokenHash(tokenHash string) (RemoteServer, error)
+	HeartbeatRemoteServer(id string, status string, metadata map[string]any) (RemoteServer, error)
+	ClaimNextRemoteTask(serverID string) (*RemoteTask, error)
+	UpdateRemoteTask(serverID string, taskID string, status string, outputText string) (RemoteTask, error)
 }
 
 type Service struct {
@@ -177,6 +197,58 @@ func (s Service) CreateTask(serverID string, input CreateTaskInput) (RemoteTask,
 	return s.repo.CreateRemoteTask(serverID, input)
 }
 
+func (s Service) AgentHeartbeat(token string, input AgentHeartbeatInput) (RemoteServer, error) {
+	server, err := s.authenticateAgent(token)
+	if err != nil {
+		return RemoteServer{}, err
+	}
+	status := strings.TrimSpace(input.Status)
+	if status == "" {
+		status = "online"
+	}
+	if !supportedStatus(status) {
+		return RemoteServer{}, errors.New("unsupported remote server status")
+	}
+	return s.repo.HeartbeatRemoteServer(server.ID, status, input.Metadata)
+}
+
+func (s Service) AgentClaimTask(token string) (AgentTaskClaim, error) {
+	server, err := s.authenticateAgent(token)
+	if err != nil {
+		return AgentTaskClaim{}, err
+	}
+	task, err := s.repo.ClaimNextRemoteTask(server.ID)
+	if err != nil {
+		return AgentTaskClaim{}, err
+	}
+	return AgentTaskClaim{Server: server, Task: task}, nil
+}
+
+func (s Service) AgentUpdateTask(token string, taskID string, input AgentTaskUpdateInput) (RemoteTask, error) {
+	server, err := s.authenticateAgent(token)
+	if err != nil {
+		return RemoteTask{}, err
+	}
+	if strings.TrimSpace(taskID) == "" {
+		return RemoteTask{}, errors.New("remote task id is required")
+	}
+	if !supportedTaskStatus(input.Status) {
+		return RemoteTask{}, errors.New("unsupported remote task status")
+	}
+	return s.repo.UpdateRemoteTask(server.ID, taskID, input.Status, input.OutputText)
+}
+
+func (s Service) authenticateAgent(token string) (RemoteServer, error) {
+	if s.repo == nil {
+		return RemoteServer{}, errors.New("remote repository is not configured")
+	}
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return RemoteServer{}, errors.New("missing agent token")
+	}
+	return s.repo.FindRemoteServerByAgentTokenHash(hashToken(token))
+}
+
 func validateServerInput(name string, host string, connectionMode string) error {
 	if strings.TrimSpace(name) == "" {
 		return errors.New("remote server name is required")
@@ -220,12 +292,29 @@ func supportedTaskKind(value string) bool {
 	}
 }
 
+func supportedTaskStatus(value string) bool {
+	switch value {
+	case "queued", "running", "succeeded", "failed", "cancelled":
+		return true
+	default:
+		return false
+	}
+}
+
 func newToken(prefix string) (string, string, error) {
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
 		return "", "", err
 	}
 	token := fmt.Sprintf("%s_%s", prefix, base64.RawURLEncoding.EncodeToString(raw))
+	return token, hashToken(token), nil
+}
+
+func hashToken(token string) string {
 	sum := sha256.Sum256([]byte(token))
-	return token, base64.RawStdEncoding.EncodeToString(sum[:]), nil
+	return base64.RawStdEncoding.EncodeToString(sum[:])
+}
+
+func SecureCompareTokenHash(left string, right string) bool {
+	return subtle.ConstantTimeCompare([]byte(left), []byte(right)) == 1
 }

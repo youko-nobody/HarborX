@@ -43,22 +43,34 @@ This project is being built as a full self-hosted control plane and already incl
 ## Current Foundation
 
 - SQLite bootstrap with schema and seed templates
-- Real CRUD endpoints for nodes, rule sets, templates, and subscriptions
-- Feature-oriented backend modules covering the full product surface
-- React operator console scaffold with live bootstrap loading
+- Admin login, API-token sessions, and protected mutation endpoints
+- CRUD endpoints for users, nodes, rule sets, templates, subscriptions, proxy groups, DNS providers, certificates, notifications, backups, system settings, traffic samples, and remote servers
+- Subscription rendering for Clash-like and sing-box templates
+- Xray configuration preview from saved nodes and rules
+- Remote server enrollment tokens, task queues, and agent heartbeat/task APIs
+- React operator console with live bootstrap loading and no license/pro gating
 
 ## Current API Slice
 
-- `GET/POST /api/v1/nodes`
-- `DELETE /api/v1/nodes/{id}`
-- `GET/POST /api/v1/rulesets`
-- `GET/POST /api/v1/templates`
-- `GET/POST /api/v1/subscriptions`
-- Summary and bootstrap endpoints for all planned feature domains
+- `POST /api/v1/auth/login`
+- `GET/POST/PUT/DELETE /api/v1/users`
+- `GET/POST/PUT/DELETE /api/v1/nodes`
+- `GET/POST/PUT/DELETE /api/v1/rulesets`
+- `GET/POST/PUT/DELETE /api/v1/templates`
+- `GET/POST/PUT/DELETE /api/v1/subscriptions`
+- `GET /api/v1/subscriptions/{id}/preview`
+- `GET /api/v1/subscriptions/{id}/download`
+- `GET /api/v1/xray/preview`
+- `GET/POST/PUT/DELETE /api/v1/remote/servers`
+- `GET/POST /api/v1/remote/servers/{id}/tasks`
+- `POST /api/v1/agent/heartbeat`
+- `POST /api/v1/agent/tasks/claim`
+- `POST /api/v1/agent/tasks/{id}`
+- Summary and bootstrap endpoints for all feature domains
 
 ## Next Steps
 
-1. Add auth sessions, users, and dashboard persistence.
-2. Wire the frontend rule studio to the CRUD APIs.
-3. Add Xray config rendering and snapshot management.
-4. Implement remote agent workflows and server orchestration.
+1. Add the standalone remote agent binary that consumes the agent task API.
+2. Implement real ACME issue/renew/deploy workers.
+3. Add traffic aggregation jobs and dashboard charts.
+4. Add importers for existing subscription/node formats.

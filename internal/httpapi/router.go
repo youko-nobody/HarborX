@@ -670,6 +670,60 @@ func NewRouter(deps Dependencies) http.Handler {
 		writeError(w, http.StatusNotFound, errors.New("remote server action not found"))
 	})
 
+	mux.HandleFunc("/api/v1/agent/heartbeat", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeMethodNotAllowed(w, http.MethodPost)
+			return
+		}
+		var input remote.AgentHeartbeatInput
+		if err := decodeJSON(r, &input); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		server, err := deps.Remote.AgentHeartbeat(agentTokenFromRequest(r), input)
+		if err != nil {
+			writeError(w, http.StatusUnauthorized, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, server)
+	})
+
+	mux.HandleFunc("/api/v1/agent/tasks/claim", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeMethodNotAllowed(w, http.MethodPost)
+			return
+		}
+		claim, err := deps.Remote.AgentClaimTask(agentTokenFromRequest(r))
+		if err != nil {
+			writeError(w, http.StatusUnauthorized, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, claim)
+	})
+
+	mux.HandleFunc("/api/v1/agent/tasks/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeMethodNotAllowed(w, http.MethodPost)
+			return
+		}
+		taskID := strings.TrimPrefix(r.URL.Path, "/api/v1/agent/tasks/")
+		if taskID == "" {
+			writeError(w, http.StatusBadRequest, errors.New("remote task id is required"))
+			return
+		}
+		var input remote.AgentTaskUpdateInput
+		if err := decodeJSON(r, &input); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		item, err := deps.Remote.AgentUpdateTask(agentTokenFromRequest(r), taskID, input)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, item)
+	})
+
 	mux.HandleFunc("/api/v1/traffic/summary", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, deps.Traffic.Summary())
 	})
@@ -1107,4 +1161,16 @@ func requireAuth(w http.ResponseWriter, r *http.Request, deps Dependencies) bool
 		return false
 	}
 	return true
+}
+
+func agentTokenFromRequest(r *http.Request) string {
+	if token := strings.TrimSpace(r.Header.Get("X-HarborX-Agent-Token")); token != "" {
+		return token
+	}
+	const prefix = "Bearer "
+	header := r.Header.Get("Authorization")
+	if strings.HasPrefix(header, prefix) {
+		return strings.TrimSpace(strings.TrimPrefix(header, prefix))
+	}
+	return ""
 }

@@ -1203,6 +1203,124 @@ func (s *SQLiteStore) CreateRemoteTask(serverID string, input remote.CreateTaskI
 	return item, nil
 }
 
+func (s *SQLiteStore) FindRemoteServerByAgentTokenHash(tokenHash string) (remote.RemoteServer, error) {
+	var id string
+	err := s.db.QueryRow(`SELECT id FROM remote_servers WHERE agent_token_hash = ?`, tokenHash).Scan(&id)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return remote.RemoteServer{}, errors.New("invalid agent token")
+		}
+		return remote.RemoteServer{}, err
+	}
+	return s.findRemoteServer(id)
+}
+
+func (s *SQLiteStore) HeartbeatRemoteServer(id string, status string, metadata map[string]any) (remote.RemoteServer, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	result, err := s.db.Exec(`
+		UPDATE remote_servers
+		SET status = ?, metadata_json = ?, updated_at = ?
+		WHERE id = ?
+	`, status, encodeJSON(cloneMap(metadata)), now, id)
+	if err != nil {
+		return remote.RemoteServer{}, err
+	}
+	if rows, err := result.RowsAffected(); err != nil {
+		return remote.RemoteServer{}, err
+	} else if rows == 0 {
+		return remote.RemoteServer{}, errors.New("remote server not found")
+	}
+	return s.findRemoteServer(id)
+}
+
+func (s *SQLiteStore) ClaimNextRemoteTask(serverID string) (*remote.RemoteTask, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+
+	var taskID string
+	err = tx.QueryRow(`
+		SELECT id
+		FROM remote_tasks
+		WHERE remote_server_id = ? AND status = 'queued'
+		ORDER BY created_at ASC
+		LIMIT 1
+	`, serverID).Scan(&taskID)
+	if err != nil {
+		_ = tx.Rollback()
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	if _, err := tx.Exec(`
+		UPDATE remote_tasks
+		SET status = 'running', updated_at = ?
+		WHERE id = ? AND remote_server_id = ?
+	`, now, taskID, serverID); err != nil {
+		_ = tx.Rollback()
+		return nil, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+
+	item, err := s.findRemoteTask(serverID, taskID)
+	if err != nil {
+		return nil, err
+	}
+	return &item, nil
+}
+
+func (s *SQLiteStore) UpdateRemoteTask(serverID string, taskID string, status string, outputText string) (remote.RemoteTask, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	result, err := s.db.Exec(`
+		UPDATE remote_tasks
+		SET status = ?, output_text = ?, updated_at = ?
+		WHERE id = ? AND remote_server_id = ?
+	`, status, outputText, now, taskID, serverID)
+	if err != nil {
+		return remote.RemoteTask{}, err
+	}
+	if rows, err := result.RowsAffected(); err != nil {
+		return remote.RemoteTask{}, err
+	} else if rows == 0 {
+		return remote.RemoteTask{}, errors.New("remote task not found")
+	}
+	return s.findRemoteTask(serverID, taskID)
+}
+
+func (s *SQLiteStore) findRemoteTask(serverID string, taskID string) (remote.RemoteTask, error) {
+	var item remote.RemoteTask
+	var payloadJSON string
+	err := s.db.QueryRow(`
+		SELECT id, remote_server_id, task_kind, status, payload_json, output_text, created_at, updated_at
+		FROM remote_tasks
+		WHERE id = ? AND remote_server_id = ?
+	`, taskID, serverID).Scan(
+		&item.ID,
+		&item.RemoteServerID,
+		&item.TaskKind,
+		&item.Status,
+		&payloadJSON,
+		&item.OutputText,
+		&item.CreatedAt,
+		&item.UpdatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return remote.RemoteTask{}, errors.New("remote task not found")
+		}
+		return remote.RemoteTask{}, err
+	}
+	item.Payload = decodeMap(payloadJSON)
+	return item, nil
+}
+
 func (s *SQLiteStore) findRemoteServer(id string) (remote.RemoteServer, error) {
 	var item remote.RemoteServer
 	var metadataJSON string
