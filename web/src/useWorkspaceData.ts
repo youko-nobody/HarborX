@@ -12,6 +12,7 @@ import {
   createSubscription,
   createTemplate,
   createTrafficSample,
+  createUser,
   deleteBackup,
   deleteCertificate,
   deleteDNSProvider,
@@ -21,9 +22,11 @@ import {
   deleteRemoteServer,
   deleteRuleSet,
   deleteSystemSetting,
+  deleteUser,
   loadWorkspace,
   updateRemoteServer,
   updateRuleSet,
+  updateUser,
   upsertSystemSetting,
   type AppBootstrap,
 } from "./api";
@@ -112,5 +115,8 @@ export function useWorkspaceData() {
     deleteSystemSetting: (key: string) => runMutation(() => deleteSystemSetting(key)),
     createTrafficSample: (input: Parameters<typeof createTrafficSample>[0]) =>
       runMutation(() => createTrafficSample(input)),
+    createUser: (input: Parameters<typeof createUser>[0]) => runMutation(() => createUser(input)),
+    updateUser: (id: string, input: Parameters<typeof updateUser>[1]) => runMutation(() => updateUser(id, input)),
+    deleteUser: (id: string) => runMutation(() => deleteUser(id)),
   };
 }

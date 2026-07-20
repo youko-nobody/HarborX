@@ -227,6 +227,26 @@ textarea {
   align-items: start;
 }
 
+.user-form {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) auto;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.user-form input {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 12px 14px;
+  background: rgba(255, 255, 255, 0.84);
+}
+
+.user-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+}
+
 .panel button {
   border: 0;
   border-radius: 999px;
@@ -579,6 +599,7 @@ textarea {
   .grid,
   .stats,
   .studio,
+  .user-form,
   .remote-layout,
   .operations-grid,
   .workspace-grid,

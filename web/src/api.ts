@@ -224,6 +224,12 @@ export type AuthUser = {
   displayName: string;
 };
 
+export type UserRecord = AuthUser & {
+  email: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type LoginResponse = {
   token: string;
   user: AuthUser;
@@ -245,6 +251,7 @@ export type AppBootstrap = {
   backups: BackupRecord[];
   systemSettings: SystemSettingRecord[];
   trafficSamples: TrafficSampleRecord[];
+  users: UserRecord[];
 };
 
 let authToken = localStorage.getItem("harborx_token") ?? "";
@@ -335,6 +342,7 @@ export async function loadWorkspace(): Promise<AppBootstrap> {
     fetchJSON<SystemSettingRecord[]>("/api/v1/system/settings"),
     fetchJSON<TrafficSampleRecord[]>("/api/v1/traffic/samples"),
   ]);
+  const users = authToken ? await fetchJSON<UserRecord[]>("/api/v1/users") : [];
 
   return {
     modules,
@@ -352,6 +360,7 @@ export async function loadWorkspace(): Promise<AppBootstrap> {
     backups,
     systemSettings,
     trafficSamples,
+    users,
   };
 }
 
@@ -605,5 +614,40 @@ export function createTrafficSample(input: {
   return fetchJSON<TrafficSampleRecord>("/api/v1/traffic/samples", {
     method: "POST",
     body: JSON.stringify(input),
+  });
+}
+
+export function createUser(input: {
+  username: string;
+  password: string;
+  role: string;
+  displayName: string;
+  email: string;
+}) {
+  return fetchJSON<UserRecord>("/api/v1/users", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function updateUser(
+  id: string,
+  input: {
+    role: string;
+    status: string;
+    displayName: string;
+    email: string;
+    password: string;
+  },
+) {
+  return fetchJSON<UserRecord>(`/api/v1/users/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(input),
+  });
+}
+
+export function deleteUser(id: string) {
+  return fetchJSON<void>(`/api/v1/users/${id}`, {
+    method: "DELETE",
   });
 }

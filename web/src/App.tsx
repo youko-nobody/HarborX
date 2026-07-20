@@ -48,6 +48,7 @@ export function App() {
     loading,
     error,
     busy,
+    refresh,
     createNode,
     createRuleSet,
     updateRuleSet,
@@ -72,6 +73,9 @@ export function App() {
     upsertSystemSetting,
     deleteSystemSetting,
     createTrafficSample,
+    createUser,
+    updateUser,
+    deleteUser,
   } = useWorkspaceData();
   const modules = data?.modules ?? [];
   const starterRules = data?.rules.defaultRules ?? [];
@@ -88,6 +92,7 @@ export function App() {
   const backups = data?.backups ?? [];
   const systemSettings = data?.systemSettings ?? [];
   const trafficSamples = data?.trafficSamples ?? [];
+  const users = data?.users ?? [];
   const ruleTypes = data?.rules.ruleTypes ?? [];
 
   const [nodeName, setNodeName] = useState("");
@@ -148,6 +153,11 @@ export function App() {
   const [trafficRX, setTrafficRX] = useState("0");
   const [trafficTX, setTrafficTX] = useState("0");
   const [opsError, setOpsError] = useState<string | null>(null);
+  const [newUsername, setNewUsername] = useState("member");
+  const [newUserPassword, setNewUserPassword] = useState("");
+  const [newUserDisplayName, setNewUserDisplayName] = useState("Member");
+  const [newUserEmail, setNewUserEmail] = useState("");
+  const [userError, setUserError] = useState<string | null>(null);
 
   const isAuthenticated = Boolean(getAuthToken());
 
@@ -159,6 +169,7 @@ export function App() {
       setAuthToken(response.token);
       setAuthUser(response.user);
       setAuthPassword("");
+      await refresh();
     } catch (error) {
       setAuthError(error instanceof Error ? error.message : "Login failed");
     }
@@ -167,6 +178,7 @@ export function App() {
   function handleLogout() {
     setAuthToken("");
     setAuthUser(null);
+    void refresh();
   }
 
   async function handleCreateNode(event: FormEvent<HTMLFormElement>) {
@@ -452,6 +464,45 @@ export function App() {
     }
   }
 
+  async function handleCreateUser(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setUserError(null);
+    try {
+      await createUser({
+        username: newUsername,
+        password: newUserPassword,
+        role: "member",
+        displayName: newUserDisplayName,
+        email: newUserEmail,
+      });
+      setNewUsername("member");
+      setNewUserPassword("");
+      setNewUserDisplayName("Member");
+      setNewUserEmail("");
+    } catch (error) {
+      setUserError(error instanceof Error ? error.message : "Failed to create user");
+    }
+  }
+
+  async function handleToggleUserStatus(id: string) {
+    const item = users.find((user) => user.id === id);
+    if (!item) {
+      return;
+    }
+    setUserError(null);
+    try {
+      await updateUser(id, {
+        role: item.role,
+        status: item.status === "active" ? "disabled" : "active",
+        displayName: item.displayName,
+        email: item.email,
+        password: "",
+      });
+    } catch (error) {
+      setUserError(error instanceof Error ? error.message : "Failed to update user");
+    }
+  }
+
   return (
     <div className="shell">
       <aside className="sidebar">
@@ -527,6 +578,56 @@ export function App() {
             </form>
           )}
         </section>
+
+        {isAuthenticated ? (
+          <section className="panel users-panel">
+            <div className="panel-head">
+              <div>
+                <p className="eyebrow">Users</p>
+                <h3>Members and operator access</h3>
+              </div>
+            </div>
+            <form className="user-form" onSubmit={(event) => void handleCreateUser(event)}>
+              <input value={newUsername} onChange={(event) => setNewUsername(event.target.value)} placeholder="username" />
+              <input
+                value={newUserPassword}
+                onChange={(event) => setNewUserPassword(event.target.value)}
+                placeholder="password"
+                type="password"
+              />
+              <input
+                value={newUserDisplayName}
+                onChange={(event) => setNewUserDisplayName(event.target.value)}
+                placeholder="display name"
+              />
+              <input value={newUserEmail} onChange={(event) => setNewUserEmail(event.target.value)} placeholder="email" />
+              <button type="submit">Create member</button>
+            </form>
+            {userError ? <p className="status error">{userError}</p> : null}
+            <div className="user-list">
+              {users.map((user) => (
+                <div className="mini-row" key={user.id}>
+                  <div>
+                    <strong>{user.displayName || user.username}</strong>
+                    <span>
+                      {user.username} / {user.role} / {user.status}
+                    </span>
+                  </div>
+                  <div className="action-row">
+                    <button type="button" className="ghost-button" onClick={() => void handleToggleUserStatus(user.id)}>
+                      {user.status === "active" ? "Disable" : "Enable"}
+                    </button>
+                    {user.id !== "local-admin" ? (
+                      <button type="button" className="ghost-button" onClick={() => void deleteUser(user.id)}>
+                        Delete
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        ) : null}
 
         <section className="stats">
           <article className="stat-card">

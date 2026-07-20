@@ -40,7 +40,7 @@ func New() (App, error) {
 	catalogService := catalog.NewService()
 	dashboardService := dashboard.NewService(catalogService)
 	authService := auth.NewService(store)
-	usersService := users.NewService()
+	usersService := users.NewService(store)
 	nodesService := nodes.NewService(store)
 	subscriptionsService := subscriptions.NewService(store)
 	rulesService := rules.NewService(store)

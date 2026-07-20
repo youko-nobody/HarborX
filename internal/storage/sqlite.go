@@ -26,6 +26,7 @@ import (
 	"harborx/internal/features/system"
 	"harborx/internal/features/templates"
 	"harborx/internal/features/traffic"
+	"harborx/internal/features/users"
 )
 
 //go:embed schema.sql seeds.sql
@@ -33,6 +34,120 @@ var migrationFiles embed.FS
 
 type SQLiteStore struct {
 	db *sql.DB
+}
+
+func (s *SQLiteStore) ListUsers() ([]users.User, error) {
+	rows, err := s.db.Query(`
+		SELECT id, username, role, status, display_name, email, created_at, updated_at
+		FROM users
+		ORDER BY created_at ASC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var items []users.User
+	for rows.Next() {
+		var item users.User
+		if err := rows.Scan(&item.ID, &item.Username, &item.Role, &item.Status, &item.DisplayName, &item.Email, &item.CreatedAt, &item.UpdatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *SQLiteStore) CreateUser(input users.CreateInput, passwordHash string) (users.User, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	role := input.Role
+	if role == "" {
+		role = "member"
+	}
+	item := users.User{
+		ID:          newID("user"),
+		Username:    strings.TrimSpace(input.Username),
+		Role:        role,
+		Status:      "active",
+		DisplayName: input.DisplayName,
+		Email:       input.Email,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+	_, err := s.db.Exec(`
+		INSERT INTO users (id, username, password_hash, role, status, display_name, email, totp_secret, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, '', ?, ?)
+	`, item.ID, item.Username, passwordHash, item.Role, item.Status, item.DisplayName, item.Email, item.CreatedAt, item.UpdatedAt)
+	if err != nil {
+		return users.User{}, err
+	}
+	return item, nil
+}
+
+func (s *SQLiteStore) UpdateUser(id string, input users.UpdateInput, passwordHash string) (users.User, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	role := input.Role
+	if role == "" {
+		role = "member"
+	}
+	status := input.Status
+	if status == "" {
+		status = "active"
+	}
+
+	var result sql.Result
+	var err error
+	if passwordHash == "" {
+		result, err = s.db.Exec(`
+			UPDATE users
+			SET role = ?, status = ?, display_name = ?, email = ?, updated_at = ?
+			WHERE id = ?
+		`, role, status, input.DisplayName, input.Email, now, id)
+	} else {
+		result, err = s.db.Exec(`
+			UPDATE users
+			SET password_hash = ?, role = ?, status = ?, display_name = ?, email = ?, updated_at = ?
+			WHERE id = ?
+		`, passwordHash, role, status, input.DisplayName, input.Email, now, id)
+	}
+	if err != nil {
+		return users.User{}, err
+	}
+	if rows, err := result.RowsAffected(); err != nil {
+		return users.User{}, err
+	} else if rows == 0 {
+		return users.User{}, errors.New("user not found")
+	}
+	return s.findUser(id)
+}
+
+func (s *SQLiteStore) DeleteUser(id string) error {
+	result, err := s.db.Exec(`DELETE FROM users WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	if rows, err := result.RowsAffected(); err != nil {
+		return err
+	} else if rows == 0 {
+		return errors.New("user not found")
+	}
+	return nil
+}
+
+func (s *SQLiteStore) findUser(id string) (users.User, error) {
+	var item users.User
+	err := s.db.QueryRow(`
+		SELECT id, username, role, status, display_name, email, created_at, updated_at
+		FROM users
+		WHERE id = ?
+	`, id).Scan(&item.ID, &item.Username, &item.Role, &item.Status, &item.DisplayName, &item.Email, &item.CreatedAt, &item.UpdatedAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return users.User{}, errors.New("user not found")
+		}
+		return users.User{}, err
+	}
+	return item, nil
 }
 
 func (s *SQLiteStore) GetUserByUsername(username string) (auth.User, error) {
