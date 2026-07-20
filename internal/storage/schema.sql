@@ -200,6 +200,18 @@ CREATE TABLE IF NOT EXISTS traffic_samples (
     recorded_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS ops_resources (
+    id TEXT PRIMARY KEY,
+    resource_kind TEXT NOT NULL,
+    name TEXT NOT NULL,
+    remote_server_id TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'active',
+    config_json TEXT NOT NULL DEFAULT '{}',
+    enabled INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS dns_providers (
     id TEXT PRIMARY KEY,
     provider_kind TEXT NOT NULL,

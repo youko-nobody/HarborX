@@ -17,6 +17,7 @@ import (
 	"harborx/internal/features/dns"
 	"harborx/internal/features/nodes"
 	"harborx/internal/features/notifications"
+	"harborx/internal/features/ops"
 	"harborx/internal/features/packages"
 	"harborx/internal/features/proxygroups"
 	"harborx/internal/features/remote"
@@ -45,6 +46,7 @@ type Dependencies struct {
 	Certificates  certificates.Service
 	DNS           dns.Service
 	Notifications notifications.Service
+	Ops           ops.Service
 	Packages      packages.Service
 	Backups       backups.Service
 	System        system.Service
@@ -1104,6 +1106,103 @@ func NewRouter(deps Dependencies) http.Handler {
 			writeJSON(w, http.StatusCreated, item)
 		default:
 			writeMethodNotAllowed(w, http.MethodGet, http.MethodPost)
+		}
+	})
+
+	mux.HandleFunc("/api/v1/ops/summary", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, deps.Ops.Summary())
+	})
+
+	mux.HandleFunc("/api/v1/ops/resources", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			items, err := deps.Ops.List(r.URL.Query().Get("kind"))
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, items)
+		case http.MethodPost:
+			if !requireAuth(w, r, deps) {
+				return
+			}
+			var input ops.CreateResourceInput
+			if err := decodeJSON(r, &input); err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			item, err := deps.Ops.Create(input)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			writeJSON(w, http.StatusCreated, item)
+		default:
+			writeMethodNotAllowed(w, http.MethodGet, http.MethodPost)
+		}
+	})
+
+	mux.HandleFunc("/api/v1/ops/resources/", func(w http.ResponseWriter, r *http.Request) {
+		path := strings.TrimPrefix(r.URL.Path, "/api/v1/ops/resources/")
+		parts := strings.Split(strings.Trim(path, "/"), "/")
+		if len(parts) == 0 || parts[0] == "" {
+			writeError(w, http.StatusBadRequest, errors.New("ops resource id is required"))
+			return
+		}
+
+		if len(parts) == 2 && parts[1] == "execute" {
+			if r.Method != http.MethodPost {
+				writeMethodNotAllowed(w, http.MethodPost)
+				return
+			}
+			if !requireAuth(w, r, deps) {
+				return
+			}
+			var input ops.ExecuteInput
+			if err := decodeJSON(r, &input); err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			item, err := deps.Ops.Execute(parts[0], input)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			writeJSON(w, http.StatusCreated, item)
+			return
+		}
+
+		if len(parts) != 1 {
+			writeError(w, http.StatusNotFound, errors.New("ops resource action not found"))
+			return
+		}
+		switch r.Method {
+		case http.MethodPut:
+			if !requireAuth(w, r, deps) {
+				return
+			}
+			var input ops.CreateResourceInput
+			if err := decodeJSON(r, &input); err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			item, err := deps.Ops.Update(parts[0], input)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, item)
+		case http.MethodDelete:
+			if !requireAuth(w, r, deps) {
+				return
+			}
+			if err := deps.Ops.Delete(parts[0]); err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			writeMethodNotAllowed(w, http.MethodPut, http.MethodDelete)
 		}
 	})
 

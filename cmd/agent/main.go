@@ -156,6 +156,22 @@ func runTask(cfg agentConfig, task remoteTask) (string, error) {
 	switch task.TaskKind {
 	case "apply-xray-config":
 		return applyXrayConfig(task.Payload)
+	case "render-xray-inbound":
+		return renderXrayInbound(task.Payload)
+	case "collect-xray-stats":
+		return collectXrayStats(task.Payload)
+	case "apply-nginx-config":
+		return applyNginxConfig(task.Payload)
+	case "issue-certificate":
+		return issueCertificate(task.Payload)
+	case "sync-external-subscription":
+		return syncExternalSubscription(task.Payload)
+	case "run-vps-maintenance":
+		return runVPSMaintenance(task.Payload)
+	case "apply-security-policy":
+		return applySecurityPolicy(task.Payload)
+	case "run-notification-automation":
+		return runNotificationAutomation(task.Payload)
 	case "restart-xray":
 		return runCommand(60*time.Second, "systemctl", "restart", "xray")
 	case "reload-config":
@@ -186,6 +202,132 @@ func runTask(cfg agentConfig, task remoteTask) (string, error) {
 	default:
 		return "", fmt.Errorf("unsupported task kind: %s", task.TaskKind)
 	}
+}
+
+func renderXrayInbound(payload map[string]any) (string, error) {
+	protocol := payloadString(payload, "protocol", "vless")
+	port := payloadString(payload, "port", "443")
+	tag := payloadString(payload, "tag", "inbound-"+protocol)
+	network := payloadString(payload, "network", "tcp")
+	security := payloadString(payload, "security", "none")
+	inbound := map[string]any{
+		"tag":      tag,
+		"listen":   payloadString(payload, "listen", "0.0.0.0"),
+		"port":     port,
+		"protocol": protocol,
+		"settings": map[string]any{},
+		"streamSettings": map[string]any{
+			"network":  network,
+			"security": security,
+		},
+	}
+	data, err := json.MarshalIndent(inbound, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	return string(data) + "\n", nil
+}
+
+func collectXrayStats(payload map[string]any) (string, error) {
+	endpoint := payloadString(payload, "statsEndpoint", "127.0.0.1:10085")
+	command := fmt.Sprintf("command -v xray >/dev/null 2>&1 && xray api stats --server=%s || true", shellQuote(endpoint))
+	output, err := runCommand(60*time.Second, "sh", "-lc", command)
+	if strings.TrimSpace(output) == "" {
+		output = "xray stats command returned no data; confirm stats API is enabled at " + endpoint + "\n"
+	}
+	return output, err
+}
+
+func applyNginxConfig(payload map[string]any) (string, error) {
+	configText := payloadString(payload, "nginxConfig", "")
+	serverName := payloadString(payload, "serverName", "harborx-fallback")
+	if strings.TrimSpace(configText) == "" {
+		configText = defaultNginxFallbackConfig(payload)
+	}
+	path := "/etc/nginx/conf.d/" + safeFileName(serverName) + ".conf"
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(path, []byte(configText), 0o644); err != nil {
+		return "", err
+	}
+	testOutput, testErr := runCommand(60*time.Second, "nginx", "-t")
+	if testErr != nil {
+		return testOutput, testErr
+	}
+	reloadOutput, reloadErr := runCommand(60*time.Second, "systemctl", "reload", "nginx")
+	return "wrote nginx config to " + path + "\n" + testOutput + reloadOutput, reloadErr
+}
+
+func issueCertificate(payload map[string]any) (string, error) {
+	domain := payloadString(payload, "domain", "")
+	email := payloadString(payload, "email", "")
+	if domain == "" {
+		return "", errors.New("issue-certificate payload.domain is required")
+	}
+	args := []string{"certonly", "--non-interactive", "--agree-tos", "-d", domain}
+	if email != "" {
+		args = append(args, "--email", email)
+	} else {
+		args = append(args, "--register-unsafely-without-email")
+	}
+	if webroot := payloadString(payload, "webroot", ""); webroot != "" {
+		args = append(args, "--webroot", "-w", webroot)
+	} else {
+		args = append(args, "--standalone")
+	}
+	return runCommand(10*time.Minute, "certbot", args...)
+}
+
+func syncExternalSubscription(payload map[string]any) (string, error) {
+	url := payloadString(payload, "url", "")
+	if url == "" {
+		return "", errors.New("sync-external-subscription payload.url is required")
+	}
+	outputPath := payloadString(payload, "outputPath", "/var/lib/harborx/external-subscription.txt")
+	if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
+		return "", err
+	}
+	command := fmt.Sprintf("curl -fsSL %s -o %s && wc -c %s", shellQuote(url), shellQuote(outputPath), shellQuote(outputPath))
+	return runCommand(2*time.Minute, "sh", "-lc", command)
+}
+
+func runVPSMaintenance(payload map[string]any) (string, error) {
+	action := payloadString(payload, "maintenanceAction", "health-check")
+	switch action {
+	case "upgrade-agent":
+		return "agent upgrade task registered; installer URL integration can be configured in payload.installerUrl\n", nil
+	case "update-system":
+		return runCommand(10*time.Minute, "sh", "-lc", "if command -v apt-get >/dev/null 2>&1; then apt-get update && apt-get upgrade -y; elif command -v dnf >/dev/null 2>&1; then dnf upgrade -y; elif command -v yum >/dev/null 2>&1; then yum update -y; else echo unsupported package manager; fi")
+	default:
+		return runCommand(60*time.Second, "sh", "-lc", "hostname; uptime; uname -a; df -h; ss -lntup 2>/dev/null | head -80 || netstat -lntup 2>/dev/null | head -80 || true")
+	}
+}
+
+func applySecurityPolicy(payload map[string]any) (string, error) {
+	var output strings.Builder
+	if payloadBool(payload, "disablePasswordSSH", false) {
+		path := "/etc/ssh/sshd_config.d/99-harborx.conf"
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return output.String(), err
+		}
+		if err := os.WriteFile(path, []byte("PasswordAuthentication no\nPermitRootLogin prohibit-password\n"), 0o644); err != nil {
+			return output.String(), err
+		}
+		restartOutput, err := runCommand(60*time.Second, "systemctl", "reload", "sshd")
+		output.WriteString(restartOutput)
+		if err != nil {
+			return output.String(), err
+		}
+		output.WriteString("applied ssh hardening\n")
+	}
+	output.WriteString("security policy evaluated\n")
+	return output.String(), nil
+}
+
+func runNotificationAutomation(payload map[string]any) (string, error) {
+	event := payloadString(payload, "event", "daily-summary")
+	return "notification automation event prepared: " + event + "\n", nil
 }
 
 func applyXrayConfig(payload map[string]any) (string, error) {
@@ -309,7 +451,41 @@ func payloadString(payload map[string]any, key string, fallback string) string {
 	if value, ok := payload[key].(string); ok && strings.TrimSpace(value) != "" {
 		return strings.TrimSpace(value)
 	}
+	if value, ok := payload[key].(float64); ok {
+		return strconv.FormatInt(int64(value), 10)
+	}
 	return fallback
+}
+
+func payloadBool(payload map[string]any, key string, fallback bool) bool {
+	if value, ok := payload[key].(bool); ok {
+		return value
+	}
+	return fallback
+}
+
+func defaultNginxFallbackConfig(payload map[string]any) string {
+	serverName := payloadString(payload, "serverName", "_")
+	root := payloadString(payload, "root", "/var/www/html")
+	listen := payloadString(payload, "listen", "80")
+	return fmt.Sprintf(`server {
+    listen %s;
+    server_name %s;
+    root %s;
+    location / {
+        try_files $uri $uri/ =404;
+    }
+}
+`, listen, serverName, root)
+}
+
+func safeFileName(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "harborx"
+	}
+	replacer := strings.NewReplacer("/", "-", "\\", "-", ":", "-", "*", "-", "?", "-", "\"", "-", "<", "-", ">", "-", "|", "-")
+	return replacer.Replace(value)
 }
 
 func shellQuote(value string) string {

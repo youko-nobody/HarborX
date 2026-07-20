@@ -297,6 +297,26 @@ export type TrafficSampleRecord = {
   recordedAt: string;
 };
 
+export type OpsResourceRecord = {
+  id: string;
+  resourceKind: string;
+  name: string;
+  remoteServerId: string;
+  status: string;
+  config: Record<string, unknown>;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type OpsExecuteResult = {
+  resource: OpsResourceRecord;
+  taskId: string;
+  taskKind: string;
+  payload: Record<string, unknown>;
+  dryRun: boolean;
+};
+
 export type AuthUser = {
   id: string;
   username: string;
@@ -334,6 +354,7 @@ export type AppBootstrap = {
   backups: BackupRecord[];
   systemSettings: SystemSettingRecord[];
   trafficSamples: TrafficSampleRecord[];
+  opsResources: OpsResourceRecord[];
   xraySnapshots: XraySnapshotRecord[];
   xrayProfiles: XrayProfileRecord[];
   users: UserRecord[];
@@ -412,6 +433,7 @@ export async function loadWorkspace(): Promise<AppBootstrap> {
     backups,
     systemSettings,
     trafficSamples,
+    opsResources,
     xraySnapshots,
     xrayProfiles,
   ] = await Promise.all([
@@ -432,6 +454,7 @@ export async function loadWorkspace(): Promise<AppBootstrap> {
     fetchJSON<BackupRecord[]>("/api/v1/backups"),
     fetchJSON<SystemSettingRecord[]>("/api/v1/system/settings"),
     fetchJSON<TrafficSampleRecord[]>("/api/v1/traffic/samples"),
+    fetchJSON<OpsResourceRecord[]>("/api/v1/ops/resources"),
     fetchJSON<XraySnapshotRecord[]>("/api/v1/xray/snapshots"),
     fetchJSON<XrayProfileRecord[]>("/api/v1/xray/profiles"),
   ]);
@@ -455,6 +478,7 @@ export async function loadWorkspace(): Promise<AppBootstrap> {
     backups,
     systemSettings,
     trafficSamples,
+    opsResources,
     xraySnapshots,
     xrayProfiles,
     users,
@@ -889,6 +913,40 @@ export function createTrafficSample(input: {
   rate: Record<string, unknown>;
 }) {
   return fetchJSON<TrafficSampleRecord>("/api/v1/traffic/samples", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function createOpsResource(input: {
+  resourceKind: string;
+  name: string;
+  remoteServerId: string;
+  status: string;
+  config: Record<string, unknown>;
+  enabled: boolean;
+}) {
+  return fetchJSON<OpsResourceRecord>("/api/v1/ops/resources", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function deleteOpsResource(id: string) {
+  return fetchJSON<void>(`/api/v1/ops/resources/${id}`, {
+    method: "DELETE",
+  });
+}
+
+export function executeOpsResource(
+  id: string,
+  input: {
+    action: string;
+    dryRun: boolean;
+    config: Record<string, unknown>;
+  },
+) {
+  return fetchJSON<OpsExecuteResult>(`/api/v1/ops/resources/${id}/execute`, {
     method: "POST",
     body: JSON.stringify(input),
   });

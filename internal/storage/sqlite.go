@@ -20,6 +20,7 @@ import (
 	"harborx/internal/features/dns"
 	"harborx/internal/features/nodes"
 	"harborx/internal/features/notifications"
+	"harborx/internal/features/ops"
 	"harborx/internal/features/packages"
 	"harborx/internal/features/proxygroups"
 	"harborx/internal/features/remote"
@@ -2473,6 +2474,131 @@ func (s *SQLiteStore) CreateTrafficSample(input traffic.CreateSampleInput) (traf
 	if err != nil {
 		return traffic.Sample{}, err
 	}
+	return item, nil
+}
+
+func (s *SQLiteStore) ListOpsResources(kind string) ([]ops.Resource, error) {
+	query := `
+		SELECT id, resource_kind, name, remote_server_id, status, config_json, enabled, created_at, updated_at
+		FROM ops_resources
+	`
+	var args []any
+	if strings.TrimSpace(kind) != "" {
+		query += ` WHERE resource_kind = ?`
+		args = append(args, strings.TrimSpace(kind))
+	}
+	query += ` ORDER BY resource_kind ASC, created_at DESC`
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var items []ops.Resource
+	for rows.Next() {
+		item, err := scanOpsResource(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *SQLiteStore) CreateOpsResource(input ops.CreateResourceInput) (ops.Resource, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	item := ops.Resource{
+		ID:             newID("ops"),
+		ResourceKind:   strings.TrimSpace(input.ResourceKind),
+		Name:           strings.TrimSpace(input.Name),
+		RemoteServerID: strings.TrimSpace(input.RemoteServerID),
+		Status:         strings.TrimSpace(input.Status),
+		Config:         cloneMap(input.Config),
+		Enabled:        input.Enabled,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+	_, err := s.db.Exec(`
+		INSERT INTO ops_resources (id, resource_kind, name, remote_server_id, status, config_json, enabled, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, item.ID, item.ResourceKind, item.Name, item.RemoteServerID, item.Status, encodeJSON(item.Config), boolToInt(item.Enabled), item.CreatedAt, item.UpdatedAt)
+	if err != nil {
+		return ops.Resource{}, err
+	}
+	return item, nil
+}
+
+func (s *SQLiteStore) UpdateOpsResource(id string, input ops.CreateResourceInput) (ops.Resource, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	result, err := s.db.Exec(`
+		UPDATE ops_resources
+		SET resource_kind = ?, name = ?, remote_server_id = ?, status = ?, config_json = ?, enabled = ?, updated_at = ?
+		WHERE id = ?
+	`, strings.TrimSpace(input.ResourceKind), strings.TrimSpace(input.Name), strings.TrimSpace(input.RemoteServerID), strings.TrimSpace(input.Status), encodeJSON(cloneMap(input.Config)), boolToInt(input.Enabled), now, id)
+	if err != nil {
+		return ops.Resource{}, err
+	}
+	if rows, err := result.RowsAffected(); err != nil {
+		return ops.Resource{}, err
+	} else if rows == 0 {
+		return ops.Resource{}, errors.New("ops resource not found")
+	}
+	return s.GetOpsResource(id)
+}
+
+func (s *SQLiteStore) DeleteOpsResource(id string) error {
+	result, err := s.db.Exec(`DELETE FROM ops_resources WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	if rows, err := result.RowsAffected(); err != nil {
+		return err
+	} else if rows == 0 {
+		return errors.New("ops resource not found")
+	}
+	return nil
+}
+
+func (s *SQLiteStore) GetOpsResource(id string) (ops.Resource, error) {
+	row := s.db.QueryRow(`
+		SELECT id, resource_kind, name, remote_server_id, status, config_json, enabled, created_at, updated_at
+		FROM ops_resources
+		WHERE id = ?
+	`, id)
+	item, err := scanOpsResource(row)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ops.Resource{}, errors.New("ops resource not found")
+		}
+		return ops.Resource{}, err
+	}
+	return item, nil
+}
+
+type opsResourceScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanOpsResource(scanner opsResourceScanner) (ops.Resource, error) {
+	var item ops.Resource
+	var configJSON string
+	var enabled int
+	if err := scanner.Scan(
+		&item.ID,
+		&item.ResourceKind,
+		&item.Name,
+		&item.RemoteServerID,
+		&item.Status,
+		&configJSON,
+		&enabled,
+		&item.CreatedAt,
+		&item.UpdatedAt,
+	); err != nil {
+		return ops.Resource{}, err
+	}
+	item.Config = decodeMap(configJSON)
+	item.Enabled = enabled == 1
 	return item, nil
 }
 

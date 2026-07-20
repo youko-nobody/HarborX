@@ -34,6 +34,28 @@ const outputFormats = [
   "v2ray",
 ];
 
+const opsResourceKinds = [
+  "xray-inbound",
+  "traffic-collector",
+  "certificate-automation",
+  "nginx-fallback",
+  "vps-maintenance",
+  "external-subscription",
+  "security-policy",
+  "notification-automation",
+];
+
+const opsDefaultConfig: Record<string, string> = {
+  "xray-inbound": '{"protocol":"vless","port":443,"network":"tcp","security":"reality","tag":"vless-reality-in"}',
+  "traffic-collector": '{"statsEndpoint":"127.0.0.1:10085","scope":"server","scopeId":"local"}',
+  "certificate-automation": '{"domain":"example.com","email":"","webroot":"/var/www/html"}',
+  "nginx-fallback": '{"serverName":"example.com","listen":"80","root":"/var/www/html"}',
+  "vps-maintenance": '{"maintenanceAction":"health-check"}',
+  "external-subscription": '{"url":"https://example.com/sub.txt","outputPath":"/var/lib/harborx/external-subscription.txt"}',
+  "security-policy": '{"disablePasswordSSH":false,"loginRateLimit":true,"auditSensitiveActions":true}',
+  "notification-automation": '{"event":"daily-summary","thresholdPercent":80}',
+};
+
 type DraftRule = Omit<RuleRecord, "id"> & { id: string };
 
 const emptyDraftRule = (): DraftRule => ({
@@ -91,6 +113,9 @@ export function App() {
     upsertSystemSetting,
     deleteSystemSetting,
     createTrafficSample,
+    createOpsResource,
+    deleteOpsResource,
+    executeOpsResource,
     createUser,
     updateUser,
     deleteUser,
@@ -112,6 +137,7 @@ export function App() {
   const backups = data?.backups ?? [];
   const systemSettings = data?.systemSettings ?? [];
   const trafficSamples = data?.trafficSamples ?? [];
+  const opsResources = data?.opsResources ?? [];
   const xraySnapshots = data?.xraySnapshots ?? [];
   const xrayProfiles = data?.xrayProfiles ?? [];
   const users = data?.users ?? [];
@@ -188,6 +214,12 @@ export function App() {
   const [trafficRX, setTrafficRX] = useState("0");
   const [trafficTX, setTrafficTX] = useState("0");
   const [opsError, setOpsError] = useState<string | null>(null);
+  const [opsResourceKind, setOpsResourceKind] = useState("xray-inbound");
+  const [opsResourceName, setOpsResourceName] = useState("VLESS Reality Inbound");
+  const [opsRemoteServerId, setOpsRemoteServerId] = useState("");
+  const [opsConfig, setOpsConfig] = useState(opsDefaultConfig["xray-inbound"]);
+  const [opsAction, setOpsAction] = useState("");
+  const [opsStatus, setOpsStatus] = useState<string | null>(null);
   const [restoredSnapshot, setRestoredSnapshot] = useState<string | null>(null);
   const [xrayProfileName, setXrayProfileName] = useState("Default External Xray");
   const [xrayProfileRemoteServerId, setXrayProfileRemoteServerId] = useState("");
@@ -626,8 +658,41 @@ export function App() {
     );
   }
 
+  function handleOpsKindChange(kind: string) {
+    setOpsResourceKind(kind);
+    setOpsConfig(opsDefaultConfig[kind] ?? "{}");
+    setOpsResourceName(kind.replaceAll("-", " "));
+  }
+
+  async function handleCreateOpsResource(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await runOps(async () => {
+      await createOpsResource({
+        resourceKind: opsResourceKind,
+        name: opsResourceName,
+        remoteServerId: opsRemoteServerId,
+        status: "active",
+        config: parseJSONObject(opsConfig),
+        enabled: true,
+      });
+      setOpsStatus("Advanced resource saved.");
+    });
+  }
+
+  async function handleExecuteOpsResource(id: string, dryRun: boolean) {
+    await runOps(async () => {
+      const result = await executeOpsResource(id, {
+        action: opsAction,
+        dryRun,
+        config: {},
+      });
+      setOpsStatus(dryRun ? `Dry-run prepared ${result.taskKind}.` : `Queued ${result.taskKind} task ${result.taskId}.`);
+    });
+  }
+
   async function runOps(action: () => Promise<unknown>) {
     setOpsError(null);
+    setOpsStatus(null);
     try {
       await action();
     } catch (error) {
@@ -1551,6 +1616,51 @@ export function App() {
                 title: `${item.sampleScope}:${item.scopeId}`,
                 subtitle: `rx ${item.rxBytes} / tx ${item.txBytes}`,
               }))}
+            />
+          </article>
+
+          <article className="panel ops-resource-panel">
+            <p className="eyebrow">Advanced Ops</p>
+            <h3>Full-stack automation resources</h3>
+            <form className="stack-form" onSubmit={(event) => void handleCreateOpsResource(event)}>
+              <select value={opsResourceKind} onChange={(event) => handleOpsKindChange(event.target.value)}>
+                {opsResourceKinds.map((kind) => (
+                  <option key={kind} value={kind}>
+                    {kind}
+                  </option>
+                ))}
+              </select>
+              <input value={opsResourceName} onChange={(event) => setOpsResourceName(event.target.value)} />
+              <select value={opsRemoteServerId} onChange={(event) => setOpsRemoteServerId(event.target.value)}>
+                <option value="">Local draft / no VPS bound</option>
+                {remoteServers.map((server) => (
+                  <option key={server.id} value={server.id}>
+                    {server.name} ({server.host})
+                  </option>
+                ))}
+              </select>
+              <input value={opsAction} onChange={(event) => setOpsAction(event.target.value)} placeholder="action, optional" />
+              <textarea value={opsConfig} onChange={(event) => setOpsConfig(event.target.value)} />
+              <button type="submit">Save resource</button>
+            </form>
+            {opsStatus ? <p className="status">{opsStatus}</p> : null}
+            <MiniList
+              items={opsResources.map((item) => ({
+                id: item.id,
+                title: item.name,
+                subtitle: `${item.resourceKind} / ${item.remoteServerId || "not bound"} / ${item.status}`,
+              }))}
+              onDelete={(id) => void runOps(() => deleteOpsResource(id))}
+              renderActions={(item) => (
+                <>
+                  <button type="button" className="ghost-button" onClick={() => void handleExecuteOpsResource(item.id, true)}>
+                    Dry-run
+                  </button>
+                  <button type="button" className="ghost-button" onClick={() => void handleExecuteOpsResource(item.id, false)}>
+                    Execute
+                  </button>
+                </>
+              )}
             />
           </article>
 

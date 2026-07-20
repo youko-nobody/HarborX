@@ -586,6 +586,10 @@ textarea {
   grid-column: 1 / -1;
 }
 
+.ops-resource-panel {
+  grid-column: 1 / -1;
+}
+
 .remote-list-panel {
   min-height: 320px;
 }
