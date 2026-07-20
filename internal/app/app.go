@@ -73,6 +73,7 @@ func New() (App, error) {
 		Notifications: notificationsService,
 		Backups:       backupsService,
 		System:        systemService,
+		WebDistDir:    cfg.WebDistDir,
 	})
 
 	return App{

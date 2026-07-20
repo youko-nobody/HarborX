@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from "react";
+import { previewSubscription, subscriptionDownloadURL, type RenderedSubscription } from "./api";
 import { useWorkspaceData } from "./useWorkspaceData";
 
 const outputFormats = [
@@ -47,6 +48,8 @@ export function App() {
   const [subscriptionFormat, setSubscriptionFormat] = useState("clash-meta");
   const [subscriptionTemplateId, setSubscriptionTemplateId] = useState("private-base-template");
   const [subscriptionSources, setSubscriptionSources] = useState("manual");
+  const [renderedSubscription, setRenderedSubscription] = useState<RenderedSubscription | null>(null);
+  const [previewError, setPreviewError] = useState<string | null>(null);
 
   async function handleCreateNode(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -106,6 +109,15 @@ export function App() {
       sources: splitCSV(subscriptionSources),
       options: {},
     });
+  }
+
+  async function handlePreviewSubscription(id: string) {
+    setPreviewError(null);
+    try {
+      setRenderedSubscription(await previewSubscription(id));
+    } catch (error) {
+      setPreviewError(error instanceof Error ? error.message : "Failed to render subscription");
+    }
   }
 
   return (
@@ -437,9 +449,28 @@ export function App() {
                       </span>
                     ))}
                   </div>
+                  <div className="action-row">
+                    <button type="button" className="ghost-button" onClick={() => void handlePreviewSubscription(item.id)}>
+                      Preview
+                    </button>
+                    <a className="ghost-link" href={subscriptionDownloadURL(item.id)}>
+                      Download
+                    </a>
+                  </div>
                 </div>
               ))}
             </div>
+
+            {previewError ? <p className="status error">{previewError}</p> : null}
+            {renderedSubscription ? (
+              <div className="preview-box">
+                <div className="entity-head">
+                  <strong>{renderedSubscription.fileName}</strong>
+                  <span>{renderedSubscription.outputFormat}</span>
+                </div>
+                <pre>{renderedSubscription.content}</pre>
+              </div>
+            ) : null}
           </article>
         </section>
       </main>

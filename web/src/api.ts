@@ -84,6 +84,16 @@ export type SubscriptionRecord = {
   updatedAt: string;
 };
 
+export type RenderedSubscription = {
+  subscriptionId: string;
+  name: string;
+  outputFormat: string;
+  templateId: string;
+  content: string;
+  fileName: string;
+  contentType: string;
+};
+
 export type AppBootstrap = {
   modules: ModuleCard[];
   dashboard: DashboardSummary;
@@ -204,3 +214,10 @@ export function createSubscription(input: {
   });
 }
 
+export function previewSubscription(id: string) {
+  return fetchJSON<RenderedSubscription>(`/api/v1/subscriptions/${id}/preview`);
+}
+
+export function subscriptionDownloadURL(id: string) {
+  return `/api/v1/subscriptions/${id}/download`;
+}

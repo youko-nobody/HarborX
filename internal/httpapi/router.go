@@ -3,7 +3,10 @@ package httpapi
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"harborx/internal/features/auth"
@@ -43,6 +46,7 @@ type Dependencies struct {
 	Notifications notifications.Service
 	Backups       backups.Service
 	System        system.Service
+	WebDistDir    string
 }
 
 func NewRouter(deps Dependencies) http.Handler {
@@ -50,7 +54,7 @@ func NewRouter(deps Dependencies) http.Handler {
 
 	mux.HandleFunc("/api/v1/health", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{
-			"status": "ok",
+			"status":  "ok",
 			"service": "harborx",
 		})
 	})
@@ -148,6 +152,37 @@ func NewRouter(deps Dependencies) http.Handler {
 		}
 	})
 
+	mux.HandleFunc("/api/v1/subscriptions/", func(w http.ResponseWriter, r *http.Request) {
+		path := strings.TrimPrefix(r.URL.Path, "/api/v1/subscriptions/")
+		parts := strings.Split(strings.Trim(path, "/"), "/")
+		if len(parts) != 2 || parts[0] == "" {
+			writeError(w, http.StatusBadRequest, errors.New("subscription action path must be /api/v1/subscriptions/{id}/preview or /download"))
+			return
+		}
+		if r.Method != http.MethodGet {
+			writeMethodNotAllowed(w, http.MethodGet)
+			return
+		}
+
+		rendered, err := deps.Subscriptions.Render(parts[0])
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+
+		switch parts[1] {
+		case "preview":
+			writeJSON(w, http.StatusOK, rendered)
+		case "download":
+			w.Header().Set("Content-Type", rendered.ContentType)
+			w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", rendered.FileName))
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(rendered.Content))
+		default:
+			writeError(w, http.StatusNotFound, errors.New("subscription action not found"))
+		}
+	})
+
 	mux.HandleFunc("/api/v1/rules/bootstrap", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, deps.Rules.Bootstrap())
 	})
@@ -240,18 +275,52 @@ func NewRouter(deps Dependencies) http.Handler {
 		writeJSON(w, http.StatusOK, deps.System.Summary())
 	})
 
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/", frontendHandler(deps.WebDistDir))
+
+	return withCORS(mux)
+}
+
+func frontendHandler(distDir string) http.HandlerFunc {
+	fileServer := http.FileServer(http.Dir(distDir))
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" && !directoryExists(distDir) {
+			writeJSON(w, http.StatusOK, map[string]any{
+				"name": "HarborX API",
+				"notes": []string{
+					"Frontend build not found. Run npm run build in the web directory.",
+					"API endpoints are available under /api/v1.",
+				},
+			})
+			return
+		}
+
+		requestPath := strings.TrimPrefix(filepath.Clean(r.URL.Path), string(filepath.Separator))
+		fullPath := filepath.Join(distDir, requestPath)
+		if info, err := os.Stat(fullPath); err == nil && !info.IsDir() {
+			fileServer.ServeHTTP(w, r)
+			return
+		}
+
+		indexPath := filepath.Join(distDir, "index.html")
+		if _, err := os.Stat(indexPath); err == nil {
+			http.ServeFile(w, r, indexPath)
+			return
+		}
+
 		writeJSON(w, http.StatusOK, map[string]any{
 			"name": "HarborX API",
 			"notes": []string{
 				"Self-hosted scaffold inspired by miaomiaowuX",
 				"No license or pro gating is included",
-				"Frontend lives in the web directory",
+				"Frontend build not found. Run npm run build in the web directory.",
 			},
 		})
-	})
+	}
+}
 
-	return withCORS(mux)
+func directoryExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }
 
 func withCORS(next http.Handler) http.Handler {

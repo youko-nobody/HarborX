@@ -6,21 +6,23 @@ import (
 )
 
 type Config struct {
-	Host    string
-	Port    string
-	DataDir string
-	DBPath  string
-	AppName string
+	Host       string
+	Port       string
+	DataDir    string
+	DBPath     string
+	WebDistDir string
+	AppName    string
 }
 
 func Load() Config {
 	dataDir := envOrDefault("HARBORX_DATA_DIR", "./data")
 	return Config{
-		Host:    envOrDefault("HARBORX_HOST", envOrDefault("MMWX_HOST", "0.0.0.0")),
-		Port:    envOrDefault("HARBORX_PORT", envOrDefault("MMWX_PORT", "18080")),
-		DataDir: dataDir,
-		DBPath:  envOrDefault("HARBORX_DB_PATH", envOrDefault("MMWX_DB_PATH", filepath.Join(dataDir, "harborx.sqlite"))),
-		AppName: "HarborX",
+		Host:       envOrDefault("HARBORX_HOST", envOrDefault("MMWX_HOST", "0.0.0.0")),
+		Port:       envOrDefault("HARBORX_PORT", envOrDefault("MMWX_PORT", "18080")),
+		DataDir:    dataDir,
+		DBPath:     envOrDefault("HARBORX_DB_PATH", envOrDefault("MMWX_DB_PATH", filepath.Join(dataDir, "harborx.sqlite"))),
+		WebDistDir: envOrDefault("HARBORX_WEB_DIST_DIR", filepath.Join("web", "dist")),
+		AppName:    "HarborX",
 	}
 }
 

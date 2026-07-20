@@ -26,4 +26,8 @@ COPY internal/storage/seeds.sql /app/seeds.sql
 
 EXPOSE 18080
 
+ENV HARBORX_DATA_DIR=/app/data
+ENV HARBORX_DB_PATH=/app/data/harborx.sqlite
+ENV HARBORX_WEB_DIST_DIR=/app/web-dist
+
 CMD ["/app/harborx"]

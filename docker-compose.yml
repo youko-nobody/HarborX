@@ -11,6 +11,10 @@ services:
       - "18080:18080"
     env_file:
       - .env.example
+    environment:
+      HARBORX_DATA_DIR: /app/data
+      HARBORX_DB_PATH: /app/data/harborx.sqlite
+      HARBORX_WEB_DIST_DIR: /app/web-dist
     volumes:
       - ./data:/app/data
       - ./templates:/app/templates

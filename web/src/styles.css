@@ -341,6 +341,43 @@ textarea {
   cursor: pointer;
 }
 
+.ghost-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 8px 12px;
+  background: transparent;
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.action-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.preview-box {
+  display: grid;
+  gap: 12px;
+  margin-top: 18px;
+  padding: 16px;
+  border-radius: 18px;
+  background: rgba(24, 34, 35, 0.92);
+  color: #fffaf2;
+}
+
+.preview-box pre {
+  margin: 0;
+  max-height: 380px;
+  overflow: auto;
+  white-space: pre-wrap;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
 .compact {
   margin-top: 0;
 }
