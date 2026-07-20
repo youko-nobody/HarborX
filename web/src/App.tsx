@@ -74,6 +74,9 @@ export function App() {
     createRemoteTask,
     saveXraySnapshot,
     restoreXraySnapshot,
+    createXrayProfile,
+    deleteXrayProfile,
+    applyXrayProfile,
     createProxyGroup,
     deleteProxyGroup,
     createDNSProvider,
@@ -110,6 +113,7 @@ export function App() {
   const systemSettings = data?.systemSettings ?? [];
   const trafficSamples = data?.trafficSamples ?? [];
   const xraySnapshots = data?.xraySnapshots ?? [];
+  const xrayProfiles = data?.xrayProfiles ?? [];
   const users = data?.users ?? [];
   const ruleTypes = data?.rules.ruleTypes ?? [];
 
@@ -185,6 +189,13 @@ export function App() {
   const [trafficTX, setTrafficTX] = useState("0");
   const [opsError, setOpsError] = useState<string | null>(null);
   const [restoredSnapshot, setRestoredSnapshot] = useState<string | null>(null);
+  const [xrayProfileName, setXrayProfileName] = useState("Default External Xray");
+  const [xrayProfileRemoteServerId, setXrayProfileRemoteServerId] = useState("");
+  const [xrayProfileMode, setXrayProfileMode] = useState("external");
+  const [xrayProfileBinary, setXrayProfileBinary] = useState("xray");
+  const [xrayProfileConfigPath, setXrayProfileConfigPath] = useState("/usr/local/etc/xray/config.json");
+  const [xrayProfileService, setXrayProfileService] = useState("xray");
+  const [xrayApplyStatus, setXrayApplyStatus] = useState<string | null>(null);
   const [newUsername, setNewUsername] = useState("member");
   const [newUserPassword, setNewUserPassword] = useState("");
   const [newUserDisplayName, setNewUserDisplayName] = useState("Member");
@@ -411,6 +422,45 @@ export function App() {
       setRestoredSnapshot(snapshot.config);
     } catch (error) {
       setXrayError(error instanceof Error ? error.message : "Failed to restore Xray snapshot");
+    }
+  }
+
+  async function handleCreateXrayProfile(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setXrayError(null);
+    try {
+      await createXrayProfile({
+        name: xrayProfileName,
+        remoteServerId: xrayProfileRemoteServerId,
+        runtimeMode: xrayProfileMode,
+        binaryPath: xrayProfileBinary,
+        configPath: xrayProfileConfigPath,
+        serviceName: xrayProfileService,
+        metadata: {},
+        enabled: true,
+      });
+    } catch (error) {
+      setXrayError(error instanceof Error ? error.message : "Failed to create Xray profile");
+    }
+  }
+
+  async function handleApplyXrayProfile(id: string, dryRun: boolean) {
+    setXrayError(null);
+    setXrayApplyStatus(null);
+    try {
+      const result = await applyXrayProfile(id, {
+        dryRun,
+        targetKind: "profile",
+        targetId: id,
+      });
+      setXrayApplyStatus(
+        dryRun
+          ? `Dry-run rendered ${result.summary}.`
+          : `Queued ${result.runtimeMode} Xray apply task ${result.taskId}.`,
+      );
+      setXrayPreview({ content: result.config, summary: result.summary });
+    } catch (error) {
+      setXrayError(error instanceof Error ? error.message : "Failed to apply Xray profile");
     }
   }
 
@@ -1252,6 +1302,7 @@ export function App() {
               <select value={remoteTaskKind} onChange={(event) => setRemoteTaskKind(event.target.value)}>
                 {[
                   "reload-config",
+                  "apply-xray-config",
                   "restart-xray",
                   "install-xray",
                   "install-nginx",
@@ -1522,6 +1573,44 @@ export function App() {
             </div>
           </div>
           {xrayError ? <p className="status error">{xrayError}</p> : null}
+          {xrayApplyStatus ? <p className="status">{xrayApplyStatus}</p> : null}
+          <form className="xray-profile-form" onSubmit={(event) => void handleCreateXrayProfile(event)}>
+            <input value={xrayProfileName} onChange={(event) => setXrayProfileName(event.target.value)} placeholder="Profile name" />
+            <select value={xrayProfileRemoteServerId} onChange={(event) => setXrayProfileRemoteServerId(event.target.value)}>
+              <option value="">Local draft / no VPS bound</option>
+              {remoteServers.map((server) => (
+                <option key={server.id} value={server.id}>
+                  {server.name} ({server.host})
+                </option>
+              ))}
+            </select>
+            <select value={xrayProfileMode} onChange={(event) => setXrayProfileMode(event.target.value)}>
+              <option value="external">External Xray</option>
+              <option value="inline">Inline Xray</option>
+            </select>
+            <input value={xrayProfileBinary} onChange={(event) => setXrayProfileBinary(event.target.value)} placeholder="xray binary" />
+            <input value={xrayProfileConfigPath} onChange={(event) => setXrayProfileConfigPath(event.target.value)} placeholder="config path" />
+            <input value={xrayProfileService} onChange={(event) => setXrayProfileService(event.target.value)} placeholder="systemd service" />
+            <button type="submit">Create Xray profile</button>
+          </form>
+          <MiniList
+            items={xrayProfiles.map((item) => ({
+              id: item.id,
+              title: item.name,
+              subtitle: `${item.runtimeMode} / ${item.remoteServerId || "not bound"} / ${item.configPath}`,
+            }))}
+            onDelete={(id) => void runOps(() => deleteXrayProfile(id))}
+            renderActions={(item) => (
+              <>
+                <button type="button" className="ghost-button" onClick={() => void handleApplyXrayProfile(item.id, true)}>
+                  Dry-run
+                </button>
+                <button type="button" className="ghost-button" onClick={() => void handleApplyXrayProfile(item.id, false)}>
+                  Apply
+                </button>
+              </>
+            )}
+          />
           <MiniList
             items={xraySnapshots.map((item) => ({
               id: item.id,

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 
 	"harborx/internal/features/nodes"
 	"harborx/internal/features/rules"
@@ -21,6 +22,12 @@ type Repository interface {
 	ListXRAYSnapshots(targetKind string, targetID string) ([]Snapshot, error)
 	CreateXRAYSnapshot(input SnapshotInput) (Snapshot, error)
 	GetXRAYSnapshot(id string) (Snapshot, error)
+	ListXRAYProfiles() ([]Profile, error)
+	CreateXRAYProfile(input CreateProfileInput) (Profile, error)
+	UpdateXRAYProfile(id string, input CreateProfileInput) (Profile, error)
+	DeleteXRAYProfile(id string) error
+	GetXRAYProfile(id string) (Profile, error)
+	QueueXRAYApplyTask(profile Profile, config string, summary string) (string, error)
 }
 
 type Service struct {
@@ -57,6 +64,48 @@ type SnapshotInput struct {
 	TargetID   string `json:"targetId"`
 	Config     string `json:"config"`
 	Summary    string `json:"summary"`
+}
+
+type Profile struct {
+	ID             string         `json:"id"`
+	Name           string         `json:"name"`
+	RemoteServerID string         `json:"remoteServerId"`
+	RuntimeMode    string         `json:"runtimeMode"`
+	BinaryPath     string         `json:"binaryPath"`
+	ConfigPath     string         `json:"configPath"`
+	ServiceName    string         `json:"serviceName"`
+	Metadata       map[string]any `json:"metadata"`
+	Enabled        bool           `json:"enabled"`
+	CreatedAt      string         `json:"createdAt"`
+	UpdatedAt      string         `json:"updatedAt"`
+}
+
+type CreateProfileInput struct {
+	Name           string         `json:"name"`
+	RemoteServerID string         `json:"remoteServerId"`
+	RuntimeMode    string         `json:"runtimeMode"`
+	BinaryPath     string         `json:"binaryPath"`
+	ConfigPath     string         `json:"configPath"`
+	ServiceName    string         `json:"serviceName"`
+	Metadata       map[string]any `json:"metadata"`
+	Enabled        bool           `json:"enabled"`
+}
+
+type ApplyInput struct {
+	ProfileID  string `json:"profileId"`
+	TargetKind string `json:"targetKind"`
+	TargetID   string `json:"targetId"`
+	DryRun     bool   `json:"dryRun"`
+}
+
+type ApplyResult struct {
+	Profile     Profile  `json:"profile"`
+	Snapshot    Snapshot `json:"snapshot"`
+	TaskID      string   `json:"taskId"`
+	RuntimeMode string   `json:"runtimeMode"`
+	Summary     string   `json:"summary"`
+	Config      string   `json:"config"`
+	DryRun      bool     `json:"dryRun"`
 }
 
 type xrayConfig struct {
@@ -179,6 +228,97 @@ func (s Service) RestoreSnapshot(id string) (Snapshot, error) {
 	return s.repo.GetXRAYSnapshot(id)
 }
 
+func (s Service) ListProfiles() ([]Profile, error) {
+	if s.repo == nil {
+		return nil, errors.New("xray repository is not configured")
+	}
+	return s.repo.ListXRAYProfiles()
+}
+
+func (s Service) CreateProfile(input CreateProfileInput) (Profile, error) {
+	if s.repo == nil {
+		return Profile{}, errors.New("xray repository is not configured")
+	}
+	normalizeProfileInput(&input)
+	if err := validateProfile(input); err != nil {
+		return Profile{}, err
+	}
+	return s.repo.CreateXRAYProfile(input)
+}
+
+func (s Service) UpdateProfile(id string, input CreateProfileInput) (Profile, error) {
+	if s.repo == nil {
+		return Profile{}, errors.New("xray repository is not configured")
+	}
+	if strings.TrimSpace(id) == "" {
+		return Profile{}, errors.New("xray profile id is required")
+	}
+	normalizeProfileInput(&input)
+	if err := validateProfile(input); err != nil {
+		return Profile{}, err
+	}
+	return s.repo.UpdateXRAYProfile(id, input)
+}
+
+func (s Service) DeleteProfile(id string) error {
+	if s.repo == nil {
+		return errors.New("xray repository is not configured")
+	}
+	if strings.TrimSpace(id) == "" {
+		return errors.New("xray profile id is required")
+	}
+	return s.repo.DeleteXRAYProfile(id)
+}
+
+func (s Service) Apply(input ApplyInput) (ApplyResult, error) {
+	if s.repo == nil {
+		return ApplyResult{}, errors.New("xray repository is not configured")
+	}
+	if strings.TrimSpace(input.ProfileID) == "" {
+		return ApplyResult{}, errors.New("xray profile id is required")
+	}
+	profile, err := s.repo.GetXRAYProfile(input.ProfileID)
+	if err != nil {
+		return ApplyResult{}, err
+	}
+	if !profile.Enabled {
+		return ApplyResult{}, errors.New("xray profile is disabled")
+	}
+	preview, err := s.Preview()
+	if err != nil {
+		return ApplyResult{}, err
+	}
+	snapshot, err := s.repo.CreateXRAYSnapshot(SnapshotInput{
+		TargetKind: fallbackString(input.TargetKind, "profile"),
+		TargetID:   fallbackString(input.TargetID, profile.ID),
+		Config:     preview.Content,
+		Summary:    preview.Summary,
+	})
+	if err != nil {
+		return ApplyResult{}, err
+	}
+	result := ApplyResult{
+		Profile:     profile,
+		Snapshot:    snapshot,
+		RuntimeMode: profile.RuntimeMode,
+		Summary:     preview.Summary,
+		Config:      preview.Content,
+		DryRun:      input.DryRun,
+	}
+	if input.DryRun {
+		return result, nil
+	}
+	if strings.TrimSpace(profile.RemoteServerID) == "" {
+		return ApplyResult{}, errors.New("xray profile must be bound to a remote server before apply")
+	}
+	taskID, err := s.repo.QueueXRAYApplyTask(profile, preview.Content, preview.Summary)
+	if err != nil {
+		return ApplyResult{}, err
+	}
+	result.TaskID = taskID
+	return result, nil
+}
+
 func buildOutbounds(items []nodes.Node) []xrayOutbound {
 	outbounds := []xrayOutbound{
 		{Tag: "direct", Protocol: "freedom", Settings: map[string]any{}},
@@ -200,6 +340,46 @@ func buildOutbounds(items []nodes.Node) []xrayOutbound {
 		})
 	}
 	return outbounds
+}
+
+func normalizeProfileInput(input *CreateProfileInput) {
+	input.Name = strings.TrimSpace(input.Name)
+	input.RemoteServerID = strings.TrimSpace(input.RemoteServerID)
+	input.RuntimeMode = strings.TrimSpace(input.RuntimeMode)
+	input.BinaryPath = strings.TrimSpace(input.BinaryPath)
+	input.ConfigPath = strings.TrimSpace(input.ConfigPath)
+	input.ServiceName = strings.TrimSpace(input.ServiceName)
+	if input.RuntimeMode == "" {
+		input.RuntimeMode = "external"
+	}
+	if input.BinaryPath == "" {
+		input.BinaryPath = "xray"
+	}
+	if input.ConfigPath == "" {
+		input.ConfigPath = "/usr/local/etc/xray/config.json"
+	}
+	if input.ServiceName == "" {
+		input.ServiceName = "xray"
+	}
+}
+
+func validateProfile(input CreateProfileInput) error {
+	if input.Name == "" {
+		return errors.New("xray profile name is required")
+	}
+	switch input.RuntimeMode {
+	case "external", "inline":
+		return nil
+	default:
+		return errors.New("xray runtime mode must be external or inline")
+	}
+}
+
+func fallbackString(value string, fallback string) string {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	return strings.TrimSpace(value)
 }
 
 func buildRoutes(ruleSets []rules.RuleSet) []xrayRoute {

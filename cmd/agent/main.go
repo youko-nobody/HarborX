@@ -154,6 +154,8 @@ func sendAgentLog(client *http.Client, cfg agentConfig, level string, message st
 
 func runTask(cfg agentConfig, task remoteTask) (string, error) {
 	switch task.TaskKind {
+	case "apply-xray-config":
+		return applyXrayConfig(task.Payload)
 	case "restart-xray":
 		return runCommand(60*time.Second, "systemctl", "restart", "xray")
 	case "reload-config":
@@ -186,15 +188,132 @@ func runTask(cfg agentConfig, task remoteTask) (string, error) {
 	}
 }
 
+func applyXrayConfig(payload map[string]any) (string, error) {
+	configText := payloadString(payload, "config", "")
+	if strings.TrimSpace(configText) == "" {
+		return "", errors.New("apply-xray-config payload.config is required")
+	}
+	if !json.Valid([]byte(configText)) {
+		return "", errors.New("apply-xray-config payload.config must be valid JSON")
+	}
+
+	runtimeMode := payloadString(payload, "runtimeMode", "external")
+	binaryPath := payloadString(payload, "binaryPath", "xray")
+	configPath := payloadString(payload, "configPath", "/usr/local/etc/xray/config.json")
+	serviceName := payloadString(payload, "serviceName", "xray")
+
+	switch runtimeMode {
+	case "external":
+		return applyExternalXray(binaryPath, configPath, serviceName, configText)
+	case "inline":
+		return applyInlineXray(binaryPath, configPath, configText)
+	default:
+		return "", fmt.Errorf("unsupported xray runtime mode: %s", runtimeMode)
+	}
+}
+
+func applyExternalXray(binaryPath string, configPath string, serviceName string, configText string) (string, error) {
+	var output strings.Builder
+	backupPath := configPath + ".harborx.bak"
+	if existing, err := os.ReadFile(configPath); err == nil {
+		if err := os.WriteFile(backupPath, existing, 0o600); err != nil {
+			return output.String(), fmt.Errorf("backup current xray config: %w", err)
+		}
+		output.WriteString("backed up current config to " + backupPath + "\n")
+	}
+	if err := writeXrayConfigTo(configPath, configText); err != nil {
+		return output.String(), err
+	}
+	output.WriteString("wrote xray config to " + configPath + "\n")
+
+	testOutput, testErr := runCommand(60*time.Second, binaryPath, "test", "-config", configPath)
+	output.WriteString(testOutput)
+	if testErr != nil {
+		rollbackOutput, rollbackErr := rollbackXrayConfig(configPath, backupPath, serviceName)
+		output.WriteString(rollbackOutput)
+		if rollbackErr != nil {
+			return output.String(), fmt.Errorf("xray config test failed and rollback failed: %v; rollback: %w", testErr, rollbackErr)
+		}
+		return output.String(), fmt.Errorf("xray config test failed: %w", testErr)
+	}
+
+	restartOutput, restartErr := runCommand(60*time.Second, "systemctl", "restart", serviceName)
+	output.WriteString(restartOutput)
+	if restartErr != nil {
+		rollbackOutput, rollbackErr := rollbackXrayConfig(configPath, backupPath, serviceName)
+		output.WriteString(rollbackOutput)
+		if rollbackErr != nil {
+			return output.String(), fmt.Errorf("xray restart failed and rollback failed: %v; rollback: %w", restartErr, rollbackErr)
+		}
+		return output.String(), fmt.Errorf("xray restart failed: %w", restartErr)
+	}
+	output.WriteString("external xray restarted via systemd service " + serviceName + "\n")
+	return output.String(), nil
+}
+
+func applyInlineXray(binaryPath string, configPath string, configText string) (string, error) {
+	var output strings.Builder
+	if err := writeXrayConfigTo(configPath, configText); err != nil {
+		return output.String(), err
+	}
+	output.WriteString("wrote inline xray config to " + configPath + "\n")
+
+	testOutput, testErr := runCommand(60*time.Second, binaryPath, "test", "-config", configPath)
+	output.WriteString(testOutput)
+	if testErr != nil {
+		return output.String(), fmt.Errorf("inline xray config test failed: %w", testErr)
+	}
+
+	logPath := filepath.Join(filepath.Dir(configPath), "harborx-inline-xray.log")
+	command := fmt.Sprintf("nohup %s run -config %s >> %s 2>&1 &", shellQuote(binaryPath), shellQuote(configPath), shellQuote(logPath))
+	startOutput, startErr := runCommand(60*time.Second, "sh", "-lc", command)
+	output.WriteString(startOutput)
+	if startErr != nil {
+		return output.String(), fmt.Errorf("start inline xray: %w", startErr)
+	}
+	output.WriteString("inline xray started; logs at " + logPath + "\n")
+	return output.String(), nil
+}
+
+func rollbackXrayConfig(configPath string, backupPath string, serviceName string) (string, error) {
+	if _, err := os.Stat(backupPath); err != nil {
+		return "no previous xray config backup found\n", nil
+	}
+	backup, err := os.ReadFile(backupPath)
+	if err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(configPath, backup, 0o600); err != nil {
+		return "", err
+	}
+	output, err := runCommand(60*time.Second, "systemctl", "restart", serviceName)
+	return "rolled back xray config\n" + output, err
+}
+
 func writeXrayConfig(configText string) error {
 	if !json.Valid([]byte(configText)) {
 		return errors.New("payload.config must be valid JSON")
 	}
 	configPath := "/usr/local/etc/xray/config.json"
+	return writeXrayConfigTo(configPath, configText)
+}
+
+func writeXrayConfigTo(configPath string, configText string) error {
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
 		return err
 	}
 	return os.WriteFile(configPath, []byte(configText), 0o600)
+}
+
+func payloadString(payload map[string]any, key string, fallback string) string {
+	if value, ok := payload[key].(string); ok && strings.TrimSpace(value) != "" {
+		return strings.TrimSpace(value)
+	}
+	return fallback
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
 func packageInstallCommand(packageName string) string {

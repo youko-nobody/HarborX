@@ -176,6 +176,20 @@ CREATE TABLE IF NOT EXISTS xray_snapshots (
     created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS xray_profiles (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    remote_server_id TEXT NOT NULL DEFAULT '',
+    runtime_mode TEXT NOT NULL DEFAULT 'external',
+    binary_path TEXT NOT NULL DEFAULT 'xray',
+    config_path TEXT NOT NULL DEFAULT '/usr/local/etc/xray/config.json',
+    service_name TEXT NOT NULL DEFAULT 'xray',
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    enabled INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS traffic_samples (
     id TEXT PRIMARY KEY,
     sample_scope TEXT NOT NULL,

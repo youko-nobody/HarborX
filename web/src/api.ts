@@ -160,6 +160,30 @@ export type XraySnapshotRecord = {
   createdAt: string;
 };
 
+export type XrayProfileRecord = {
+  id: string;
+  name: string;
+  remoteServerId: string;
+  runtimeMode: string;
+  binaryPath: string;
+  configPath: string;
+  serviceName: string;
+  metadata: Record<string, unknown>;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type XrayApplyResult = {
+  profile: XrayProfileRecord;
+  snapshot: XraySnapshotRecord;
+  taskId: string;
+  runtimeMode: string;
+  summary: string;
+  config: string;
+  dryRun: boolean;
+};
+
 export type RemoteServerRecord = {
   id: string;
   name: string;
@@ -311,6 +335,7 @@ export type AppBootstrap = {
   systemSettings: SystemSettingRecord[];
   trafficSamples: TrafficSampleRecord[];
   xraySnapshots: XraySnapshotRecord[];
+  xrayProfiles: XrayProfileRecord[];
   users: UserRecord[];
 };
 
@@ -388,6 +413,7 @@ export async function loadWorkspace(): Promise<AppBootstrap> {
     systemSettings,
     trafficSamples,
     xraySnapshots,
+    xrayProfiles,
   ] = await Promise.all([
     fetchJSON<ModuleCard[]>("/api/v1/catalog/modules"),
     fetchJSON<DashboardSummary>("/api/v1/dashboard/summary"),
@@ -407,6 +433,7 @@ export async function loadWorkspace(): Promise<AppBootstrap> {
     fetchJSON<SystemSettingRecord[]>("/api/v1/system/settings"),
     fetchJSON<TrafficSampleRecord[]>("/api/v1/traffic/samples"),
     fetchJSON<XraySnapshotRecord[]>("/api/v1/xray/snapshots"),
+    fetchJSON<XrayProfileRecord[]>("/api/v1/xray/profiles"),
   ]);
   const users = authToken ? await fetchJSON<UserRecord[]>("/api/v1/users") : [];
 
@@ -429,6 +456,7 @@ export async function loadWorkspace(): Promise<AppBootstrap> {
     systemSettings,
     trafficSamples,
     xraySnapshots,
+    xrayProfiles,
     users,
   };
 }
@@ -647,6 +675,35 @@ export function restoreXraySnapshot(id: string) {
   return fetchJSON<XraySnapshotRecord>(`/api/v1/xray/snapshots/${id}/restore`, {
     method: "POST",
     body: JSON.stringify({}),
+  });
+}
+
+export function createXrayProfile(input: {
+  name: string;
+  remoteServerId: string;
+  runtimeMode: string;
+  binaryPath: string;
+  configPath: string;
+  serviceName: string;
+  metadata: Record<string, unknown>;
+  enabled: boolean;
+}) {
+  return fetchJSON<XrayProfileRecord>("/api/v1/xray/profiles", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function deleteXrayProfile(id: string) {
+  return fetchJSON<void>(`/api/v1/xray/profiles/${id}`, {
+    method: "DELETE",
+  });
+}
+
+export function applyXrayProfile(id: string, input: { dryRun: boolean; targetKind: string; targetId: string }) {
+  return fetchJSON<XrayApplyResult>(`/api/v1/xray/profiles/${id}/apply`, {
+    method: "POST",
+    body: JSON.stringify(input),
   });
 }
 

@@ -325,6 +325,21 @@ textarea {
   resize: vertical;
 }
 
+.xray-profile-form {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.xray-profile-form input,
+.xray-profile-form select {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 12px 14px;
+  background: rgba(255, 255, 255, 0.84);
+}
+
 .inline-form {
   display: grid;
   grid-template-columns: 1fr 120px;
@@ -641,6 +656,7 @@ textarea {
   .stats,
   .studio,
   .user-form,
+  .xray-profile-form,
   .remote-layout,
   .operations-grid,
   .workspace-grid,

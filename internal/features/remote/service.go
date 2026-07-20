@@ -393,7 +393,7 @@ func supportedStatus(value string) bool {
 
 func supportedTaskKind(value string) bool {
 	switch value {
-	case "install-xray", "restart-xray", "reload-config", "install-nginx", "renew-certificate", "install-warp", "shell-script":
+	case "install-xray", "restart-xray", "reload-config", "apply-xray-config", "install-nginx", "renew-certificate", "install-warp", "shell-script":
 		return true
 	default:
 		return false

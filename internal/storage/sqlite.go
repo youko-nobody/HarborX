@@ -1760,6 +1760,152 @@ func (s *SQLiteStore) GetXRAYSnapshot(id string) (xray.Snapshot, error) {
 	return item, nil
 }
 
+func (s *SQLiteStore) ListXRAYProfiles() ([]xray.Profile, error) {
+	rows, err := s.db.Query(`
+		SELECT id, name, remote_server_id, runtime_mode, binary_path, config_path, service_name, metadata_json, enabled, created_at, updated_at
+		FROM xray_profiles
+		ORDER BY created_at DESC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var items []xray.Profile
+	for rows.Next() {
+		item, err := scanXRAYProfile(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *SQLiteStore) CreateXRAYProfile(input xray.CreateProfileInput) (xray.Profile, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	item := xray.Profile{
+		ID:             newID("xrayprofile"),
+		Name:           strings.TrimSpace(input.Name),
+		RemoteServerID: strings.TrimSpace(input.RemoteServerID),
+		RuntimeMode:    strings.TrimSpace(input.RuntimeMode),
+		BinaryPath:     strings.TrimSpace(input.BinaryPath),
+		ConfigPath:     strings.TrimSpace(input.ConfigPath),
+		ServiceName:    strings.TrimSpace(input.ServiceName),
+		Metadata:       cloneMap(input.Metadata),
+		Enabled:        input.Enabled,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+	_, err := s.db.Exec(`
+		INSERT INTO xray_profiles (id, name, remote_server_id, runtime_mode, binary_path, config_path, service_name, metadata_json, enabled, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, item.ID, item.Name, item.RemoteServerID, item.RuntimeMode, item.BinaryPath, item.ConfigPath, item.ServiceName, encodeJSON(item.Metadata), boolToInt(item.Enabled), item.CreatedAt, item.UpdatedAt)
+	if err != nil {
+		return xray.Profile{}, err
+	}
+	return item, nil
+}
+
+func (s *SQLiteStore) UpdateXRAYProfile(id string, input xray.CreateProfileInput) (xray.Profile, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	result, err := s.db.Exec(`
+		UPDATE xray_profiles
+		SET name = ?, remote_server_id = ?, runtime_mode = ?, binary_path = ?, config_path = ?, service_name = ?, metadata_json = ?, enabled = ?, updated_at = ?
+		WHERE id = ?
+	`, strings.TrimSpace(input.Name), strings.TrimSpace(input.RemoteServerID), strings.TrimSpace(input.RuntimeMode), strings.TrimSpace(input.BinaryPath), strings.TrimSpace(input.ConfigPath), strings.TrimSpace(input.ServiceName), encodeJSON(cloneMap(input.Metadata)), boolToInt(input.Enabled), now, id)
+	if err != nil {
+		return xray.Profile{}, err
+	}
+	if rows, err := result.RowsAffected(); err != nil {
+		return xray.Profile{}, err
+	} else if rows == 0 {
+		return xray.Profile{}, errors.New("xray profile not found")
+	}
+	return s.GetXRAYProfile(id)
+}
+
+func (s *SQLiteStore) DeleteXRAYProfile(id string) error {
+	result, err := s.db.Exec(`DELETE FROM xray_profiles WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	if rows, err := result.RowsAffected(); err != nil {
+		return err
+	} else if rows == 0 {
+		return errors.New("xray profile not found")
+	}
+	return nil
+}
+
+func (s *SQLiteStore) GetXRAYProfile(id string) (xray.Profile, error) {
+	row := s.db.QueryRow(`
+		SELECT id, name, remote_server_id, runtime_mode, binary_path, config_path, service_name, metadata_json, enabled, created_at, updated_at
+		FROM xray_profiles
+		WHERE id = ?
+	`, id)
+	item, err := scanXRAYProfile(row)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return xray.Profile{}, errors.New("xray profile not found")
+		}
+		return xray.Profile{}, err
+	}
+	return item, nil
+}
+
+func (s *SQLiteStore) QueueXRAYApplyTask(profile xray.Profile, config string, summary string) (string, error) {
+	if strings.TrimSpace(profile.RemoteServerID) == "" {
+		return "", errors.New("xray profile remote server id is required")
+	}
+	task, err := s.CreateRemoteTask(profile.RemoteServerID, remote.CreateTaskInput{
+		TaskKind: "apply-xray-config",
+		Payload: map[string]any{
+			"runtimeMode": profile.RuntimeMode,
+			"binaryPath":  profile.BinaryPath,
+			"configPath":  profile.ConfigPath,
+			"serviceName": profile.ServiceName,
+			"config":      config,
+			"summary":     summary,
+			"profileId":   profile.ID,
+			"profileName": profile.Name,
+		},
+	})
+	if err != nil {
+		return "", err
+	}
+	_ = s.CreateRemoteTaskLog(profile.RemoteServerID, task.ID, "queued", "xray apply task queued")
+	return task.ID, nil
+}
+
+type xrayProfileScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanXRAYProfile(scanner xrayProfileScanner) (xray.Profile, error) {
+	var item xray.Profile
+	var metadataJSON string
+	var enabled int
+	if err := scanner.Scan(
+		&item.ID,
+		&item.Name,
+		&item.RemoteServerID,
+		&item.RuntimeMode,
+		&item.BinaryPath,
+		&item.ConfigPath,
+		&item.ServiceName,
+		&metadataJSON,
+		&enabled,
+		&item.CreatedAt,
+		&item.UpdatedAt,
+	); err != nil {
+		return xray.Profile{}, err
+	}
+	item.Metadata = decodeMap(metadataJSON)
+	item.Enabled = enabled == 1
+	return item, nil
+}
+
 func (s *SQLiteStore) ListProxyGroups() ([]proxygroups.ProxyGroup, error) {
 	rows, err := s.db.Query(`
 		SELECT id, name, group_kind, config_json, sort_order, created_at, updated_at

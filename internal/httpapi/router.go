@@ -775,6 +775,99 @@ func NewRouter(deps Dependencies) http.Handler {
 		writeError(w, http.StatusNotFound, errors.New("xray snapshot action not found"))
 	})
 
+	mux.HandleFunc("/api/v1/xray/profiles", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			items, err := deps.Xray.ListProfiles()
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, items)
+		case http.MethodPost:
+			if !requireAuth(w, r, deps) {
+				return
+			}
+			var input xray.CreateProfileInput
+			if err := decodeJSON(r, &input); err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			item, err := deps.Xray.CreateProfile(input)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			writeJSON(w, http.StatusCreated, item)
+		default:
+			writeMethodNotAllowed(w, http.MethodGet, http.MethodPost)
+		}
+	})
+
+	mux.HandleFunc("/api/v1/xray/profiles/", func(w http.ResponseWriter, r *http.Request) {
+		path := strings.TrimPrefix(r.URL.Path, "/api/v1/xray/profiles/")
+		parts := strings.Split(strings.Trim(path, "/"), "/")
+		if len(parts) == 0 || parts[0] == "" {
+			writeError(w, http.StatusBadRequest, errors.New("xray profile id is required"))
+			return
+		}
+		if len(parts) == 2 && parts[1] == "apply" {
+			if r.Method != http.MethodPost {
+				writeMethodNotAllowed(w, http.MethodPost)
+				return
+			}
+			if !requireAuth(w, r, deps) {
+				return
+			}
+			var input xray.ApplyInput
+			if err := decodeJSON(r, &input); err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			input.ProfileID = parts[0]
+			item, err := deps.Xray.Apply(input)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			writeJSON(w, http.StatusCreated, item)
+			return
+		}
+
+		if len(parts) != 1 {
+			writeError(w, http.StatusNotFound, errors.New("xray profile action not found"))
+			return
+		}
+		switch r.Method {
+		case http.MethodPut:
+			if !requireAuth(w, r, deps) {
+				return
+			}
+			var input xray.CreateProfileInput
+			if err := decodeJSON(r, &input); err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			item, err := deps.Xray.UpdateProfile(parts[0], input)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, item)
+		case http.MethodDelete:
+			if !requireAuth(w, r, deps) {
+				return
+			}
+			if err := deps.Xray.DeleteProfile(parts[0]); err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			writeMethodNotAllowed(w, http.MethodPut, http.MethodDelete)
+		}
+	})
+
 	mux.HandleFunc("/api/v1/remote/summary", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, deps.Remote.Summary())
 	})
