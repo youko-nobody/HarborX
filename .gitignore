@@ -1,7 +1,9 @@
 web/node_modules/
 web/dist/
+web/*.tsbuildinfo
 data/
+.cache/
 *.db
 *.sqlite
 *.sqlite3
-
+server.exe
