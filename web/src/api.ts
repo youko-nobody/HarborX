@@ -121,6 +121,101 @@ export type XrayPreview = {
   summary: string;
 };
 
+export type RemoteServerRecord = {
+  id: string;
+  name: string;
+  host: string;
+  connectionMode: string;
+  status: string;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type RemoteServerEnrollment = {
+  server: RemoteServerRecord;
+  serverToken: string;
+  agentToken: string;
+};
+
+export type RemoteTaskRecord = {
+  id: string;
+  remoteServerId: string;
+  taskKind: string;
+  status: string;
+  payload: Record<string, unknown>;
+  outputText: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ProxyGroupRecord = {
+  id: string;
+  name: string;
+  groupKind: string;
+  config: Record<string, unknown>;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type DNSProviderRecord = {
+  id: string;
+  providerKind: string;
+  name: string;
+  credentials: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CertificateRecord = {
+  id: string;
+  name: string;
+  domain: string;
+  providerId: string;
+  certPem: string;
+  keyPem: string;
+  autoRenew: boolean;
+  autoDeploy: boolean;
+  expiresAt: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type NotificationChannelRecord = {
+  id: string;
+  channelKind: string;
+  name: string;
+  config: Record<string, unknown>;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type BackupRecord = {
+  id: string;
+  backupKind: string;
+  filePath: string;
+  summary: string;
+  createdAt: string;
+};
+
+export type SystemSettingRecord = {
+  key: string;
+  value: Record<string, unknown>;
+  updatedAt: string;
+};
+
+export type TrafficSampleRecord = {
+  id: string;
+  sampleScope: string;
+  scopeId: string;
+  rxBytes: number;
+  txBytes: number;
+  rate: Record<string, unknown>;
+  recordedAt: string;
+};
+
 export type AuthUser = {
   id: string;
   username: string;
@@ -142,6 +237,14 @@ export type AppBootstrap = {
   nodes: NodeRecord[];
   ruleSets: RuleSetRecord[];
   subscriptions: SubscriptionRecord[];
+  remoteServers: RemoteServerRecord[];
+  proxyGroups: ProxyGroupRecord[];
+  dnsProviders: DNSProviderRecord[];
+  certificates: CertificateRecord[];
+  notificationChannels: NotificationChannelRecord[];
+  backups: BackupRecord[];
+  systemSettings: SystemSettingRecord[];
+  trafficSamples: TrafficSampleRecord[];
 };
 
 let authToken = localStorage.getItem("harborx_token") ?? "";
@@ -199,7 +302,23 @@ export function login(input: { username: string; password: string }) {
 }
 
 export async function loadWorkspace(): Promise<AppBootstrap> {
-  const [modules, dashboard, rules, templates, nodes, ruleSets, subscriptions] = await Promise.all([
+  const [
+    modules,
+    dashboard,
+    rules,
+    templates,
+    nodes,
+    ruleSets,
+    subscriptions,
+    remoteServers,
+    proxyGroups,
+    dnsProviders,
+    certificates,
+    notificationChannels,
+    backups,
+    systemSettings,
+    trafficSamples,
+  ] = await Promise.all([
     fetchJSON<ModuleCard[]>("/api/v1/catalog/modules"),
     fetchJSON<DashboardSummary>("/api/v1/dashboard/summary"),
     fetchJSON<RulesBootstrap>("/api/v1/rules/bootstrap"),
@@ -207,9 +326,33 @@ export async function loadWorkspace(): Promise<AppBootstrap> {
     fetchJSON<NodeRecord[]>("/api/v1/nodes"),
     fetchJSON<RuleSetRecord[]>("/api/v1/rulesets"),
     fetchJSON<SubscriptionRecord[]>("/api/v1/subscriptions"),
+    fetchJSON<RemoteServerRecord[]>("/api/v1/remote/servers"),
+    fetchJSON<ProxyGroupRecord[]>("/api/v1/proxy-groups"),
+    fetchJSON<DNSProviderRecord[]>("/api/v1/dns/providers"),
+    fetchJSON<CertificateRecord[]>("/api/v1/certificates"),
+    fetchJSON<NotificationChannelRecord[]>("/api/v1/notifications/channels"),
+    fetchJSON<BackupRecord[]>("/api/v1/backups"),
+    fetchJSON<SystemSettingRecord[]>("/api/v1/system/settings"),
+    fetchJSON<TrafficSampleRecord[]>("/api/v1/traffic/samples"),
   ]);
 
-  return { modules, dashboard, rules, templates, nodes, ruleSets, subscriptions };
+  return {
+    modules,
+    dashboard,
+    rules,
+    templates,
+    nodes,
+    ruleSets,
+    subscriptions,
+    remoteServers,
+    proxyGroups,
+    dnsProviders,
+    certificates,
+    notificationChannels,
+    backups,
+    systemSettings,
+    trafficSamples,
+  };
 }
 
 export function createNode(input: {
@@ -298,4 +441,169 @@ export function subscriptionDownloadURL(id: string) {
 
 export function previewXray() {
   return fetchJSON<XrayPreview>("/api/v1/xray/preview");
+}
+
+export function createRemoteServer(input: {
+  name: string;
+  host: string;
+  connectionMode: string;
+  metadata: Record<string, unknown>;
+}) {
+  return fetchJSON<RemoteServerEnrollment>("/api/v1/remote/servers", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function updateRemoteServer(
+  id: string,
+  input: {
+    name: string;
+    host: string;
+    connectionMode: string;
+    status: string;
+    metadata: Record<string, unknown>;
+  },
+) {
+  return fetchJSON<RemoteServerRecord>(`/api/v1/remote/servers/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(input),
+  });
+}
+
+export function deleteRemoteServer(id: string) {
+  return fetchJSON<void>(`/api/v1/remote/servers/${id}`, {
+    method: "DELETE",
+  });
+}
+
+export function listRemoteTasks(serverId: string) {
+  return fetchJSON<RemoteTaskRecord[]>(`/api/v1/remote/servers/${serverId}/tasks`);
+}
+
+export function createRemoteTask(
+  serverId: string,
+  input: {
+    taskKind: string;
+    payload: Record<string, unknown>;
+  },
+) {
+  return fetchJSON<RemoteTaskRecord>(`/api/v1/remote/servers/${serverId}/tasks`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function createProxyGroup(input: {
+  name: string;
+  groupKind: string;
+  config: Record<string, unknown>;
+  sortOrder: number;
+}) {
+  return fetchJSON<ProxyGroupRecord>("/api/v1/proxy-groups", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function deleteProxyGroup(id: string) {
+  return fetchJSON<void>(`/api/v1/proxy-groups/${id}`, {
+    method: "DELETE",
+  });
+}
+
+export function createDNSProvider(input: {
+  providerKind: string;
+  name: string;
+  credentials: Record<string, unknown>;
+}) {
+  return fetchJSON<DNSProviderRecord>("/api/v1/dns/providers", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function deleteDNSProvider(id: string) {
+  return fetchJSON<void>(`/api/v1/dns/providers/${id}`, {
+    method: "DELETE",
+  });
+}
+
+export function createCertificate(input: {
+  name: string;
+  domain: string;
+  providerId: string;
+  certPem: string;
+  keyPem: string;
+  autoRenew: boolean;
+  autoDeploy: boolean;
+  expiresAt: string;
+}) {
+  return fetchJSON<CertificateRecord>("/api/v1/certificates", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function deleteCertificate(id: string) {
+  return fetchJSON<void>(`/api/v1/certificates/${id}`, {
+    method: "DELETE",
+  });
+}
+
+export function createNotificationChannel(input: {
+  channelKind: string;
+  name: string;
+  config: Record<string, unknown>;
+  enabled: boolean;
+}) {
+  return fetchJSON<NotificationChannelRecord>("/api/v1/notifications/channels", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function deleteNotificationChannel(id: string) {
+  return fetchJSON<void>(`/api/v1/notifications/channels/${id}`, {
+    method: "DELETE",
+  });
+}
+
+export function createBackup(input: { backupKind: string; filePath: string; summary: string }) {
+  return fetchJSON<BackupRecord>("/api/v1/backups", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function deleteBackup(id: string) {
+  return fetchJSON<void>(`/api/v1/backups/${id}`, {
+    method: "DELETE",
+  });
+}
+
+export function upsertSystemSetting(key: string, input: { value: Record<string, unknown> }) {
+  return fetchJSON<SystemSettingRecord>(`/api/v1/system/settings/${key}`, {
+    method: "PUT",
+    body: JSON.stringify(input),
+  });
+}
+
+export function deleteSystemSetting(key: string) {
+  return fetchJSON<void>(`/api/v1/system/settings/${key}`, {
+    method: "DELETE",
+  });
+}
+
+export function createTrafficSample(input: {
+  sampleScope: string;
+  scopeId: string;
+  rxBytes: number;
+  txBytes: number;
+  rate: Record<string, unknown>;
+}) {
+  return fetchJSON<TrafficSampleRecord>("/api/v1/traffic/samples", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
 }

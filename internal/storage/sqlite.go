@@ -14,10 +14,18 @@ import (
 
 	"harborx/internal/config"
 	"harborx/internal/features/auth"
+	"harborx/internal/features/backups"
+	"harborx/internal/features/certificates"
+	"harborx/internal/features/dns"
 	"harborx/internal/features/nodes"
+	"harborx/internal/features/notifications"
+	"harborx/internal/features/proxygroups"
+	"harborx/internal/features/remote"
 	"harborx/internal/features/rules"
 	"harborx/internal/features/subscriptions"
+	"harborx/internal/features/system"
 	"harborx/internal/features/templates"
+	"harborx/internal/features/traffic"
 )
 
 //go:embed schema.sql seeds.sql
@@ -625,6 +633,793 @@ func (s *SQLiteStore) CreateSubscription(input subscriptions.CreateInput) (subsc
 		return subscriptions.Subscription{}, err
 	}
 
+	return item, nil
+}
+
+func (s *SQLiteStore) ListRemoteServers() ([]remote.RemoteServer, error) {
+	rows, err := s.db.Query(`
+		SELECT id, name, host, connection_mode, status, metadata_json, created_at, updated_at
+		FROM remote_servers
+		ORDER BY created_at DESC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var items []remote.RemoteServer
+	for rows.Next() {
+		var item remote.RemoteServer
+		var metadataJSON string
+		if err := rows.Scan(
+			&item.ID,
+			&item.Name,
+			&item.Host,
+			&item.ConnectionMode,
+			&item.Status,
+			&metadataJSON,
+			&item.CreatedAt,
+			&item.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		item.Metadata = decodeMap(metadataJSON)
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *SQLiteStore) CreateRemoteServer(input remote.CreateServerInput, serverTokenHash string, agentTokenHash string) (remote.RemoteServer, error) {
+	if strings.TrimSpace(input.Name) == "" {
+		return remote.RemoteServer{}, errors.New("remote server name is required")
+	}
+	if strings.TrimSpace(input.Host) == "" {
+		return remote.RemoteServer{}, errors.New("remote server host is required")
+	}
+	if strings.TrimSpace(input.ConnectionMode) == "" {
+		input.ConnectionMode = "pull"
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	item := remote.RemoteServer{
+		ID:             newID("remote"),
+		Name:           strings.TrimSpace(input.Name),
+		Host:           strings.TrimSpace(input.Host),
+		ConnectionMode: input.ConnectionMode,
+		Status:         "pending",
+		Metadata:       cloneMap(input.Metadata),
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+
+	_, err := s.db.Exec(`
+		INSERT INTO remote_servers (id, name, host, connection_mode, status, server_token_hash, agent_token_hash, metadata_json, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`,
+		item.ID,
+		item.Name,
+		item.Host,
+		item.ConnectionMode,
+		item.Status,
+		serverTokenHash,
+		agentTokenHash,
+		encodeJSON(item.Metadata),
+		item.CreatedAt,
+		item.UpdatedAt,
+	)
+	if err != nil {
+		return remote.RemoteServer{}, err
+	}
+
+	return item, nil
+}
+
+func (s *SQLiteStore) UpdateRemoteServer(id string, input remote.UpdateServerInput) (remote.RemoteServer, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	result, err := s.db.Exec(`
+		UPDATE remote_servers
+		SET name = ?, host = ?, connection_mode = ?, status = ?, metadata_json = ?, updated_at = ?
+		WHERE id = ?
+	`,
+		strings.TrimSpace(input.Name),
+		strings.TrimSpace(input.Host),
+		input.ConnectionMode,
+		input.Status,
+		encodeJSON(cloneMap(input.Metadata)),
+		now,
+		id,
+	)
+	if err != nil {
+		return remote.RemoteServer{}, err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return remote.RemoteServer{}, err
+	}
+	if rowsAffected == 0 {
+		return remote.RemoteServer{}, errors.New("remote server not found")
+	}
+
+	return s.findRemoteServer(id)
+}
+
+func (s *SQLiteStore) DeleteRemoteServer(id string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM remote_tasks WHERE remote_server_id = ?`, id); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	result, err := tx.Exec(`DELETE FROM remote_servers WHERE id = ?`, id)
+	if err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if rowsAffected == 0 {
+		_ = tx.Rollback()
+		return errors.New("remote server not found")
+	}
+	return tx.Commit()
+}
+
+func (s *SQLiteStore) ListRemoteTasks(serverID string) ([]remote.RemoteTask, error) {
+	rows, err := s.db.Query(`
+		SELECT id, remote_server_id, task_kind, status, payload_json, output_text, created_at, updated_at
+		FROM remote_tasks
+		WHERE remote_server_id = ?
+		ORDER BY created_at DESC
+	`, serverID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var items []remote.RemoteTask
+	for rows.Next() {
+		var item remote.RemoteTask
+		var payloadJSON string
+		if err := rows.Scan(
+			&item.ID,
+			&item.RemoteServerID,
+			&item.TaskKind,
+			&item.Status,
+			&payloadJSON,
+			&item.OutputText,
+			&item.CreatedAt,
+			&item.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		item.Payload = decodeMap(payloadJSON)
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *SQLiteStore) CreateRemoteTask(serverID string, input remote.CreateTaskInput) (remote.RemoteTask, error) {
+	if _, err := s.findRemoteServer(serverID); err != nil {
+		return remote.RemoteTask{}, err
+	}
+	if strings.TrimSpace(input.TaskKind) == "" {
+		return remote.RemoteTask{}, errors.New("remote task kind is required")
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	item := remote.RemoteTask{
+		ID:             newID("task"),
+		RemoteServerID: serverID,
+		TaskKind:       strings.TrimSpace(input.TaskKind),
+		Status:         "queued",
+		Payload:        cloneMap(input.Payload),
+		OutputText:     "",
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+
+	_, err := s.db.Exec(`
+		INSERT INTO remote_tasks (id, remote_server_id, task_kind, status, payload_json, output_text, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	`,
+		item.ID,
+		item.RemoteServerID,
+		item.TaskKind,
+		item.Status,
+		encodeJSON(item.Payload),
+		item.OutputText,
+		item.CreatedAt,
+		item.UpdatedAt,
+	)
+	if err != nil {
+		return remote.RemoteTask{}, err
+	}
+
+	return item, nil
+}
+
+func (s *SQLiteStore) findRemoteServer(id string) (remote.RemoteServer, error) {
+	var item remote.RemoteServer
+	var metadataJSON string
+	err := s.db.QueryRow(`
+		SELECT id, name, host, connection_mode, status, metadata_json, created_at, updated_at
+		FROM remote_servers
+		WHERE id = ?
+	`, id).Scan(
+		&item.ID,
+		&item.Name,
+		&item.Host,
+		&item.ConnectionMode,
+		&item.Status,
+		&metadataJSON,
+		&item.CreatedAt,
+		&item.UpdatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return remote.RemoteServer{}, errors.New("remote server not found")
+		}
+		return remote.RemoteServer{}, err
+	}
+	item.Metadata = decodeMap(metadataJSON)
+	return item, nil
+}
+
+func (s *SQLiteStore) ListProxyGroups() ([]proxygroups.ProxyGroup, error) {
+	rows, err := s.db.Query(`
+		SELECT id, name, group_kind, config_json, sort_order, created_at, updated_at
+		FROM proxy_groups
+		ORDER BY sort_order ASC, name ASC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var items []proxygroups.ProxyGroup
+	for rows.Next() {
+		var item proxygroups.ProxyGroup
+		var configJSON string
+		if err := rows.Scan(&item.ID, &item.Name, &item.GroupKind, &configJSON, &item.SortOrder, &item.CreatedAt, &item.UpdatedAt); err != nil {
+			return nil, err
+		}
+		item.Config = decodeMap(configJSON)
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *SQLiteStore) CreateProxyGroup(input proxygroups.CreateInput) (proxygroups.ProxyGroup, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	item := proxygroups.ProxyGroup{
+		ID:        newID("proxygroup"),
+		Name:      strings.TrimSpace(input.Name),
+		GroupKind: input.GroupKind,
+		Config:    cloneMap(input.Config),
+		SortOrder: input.SortOrder,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	_, err := s.db.Exec(`
+		INSERT INTO proxy_groups (id, name, group_kind, config_json, sort_order, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+	`, item.ID, item.Name, item.GroupKind, encodeJSON(item.Config), item.SortOrder, item.CreatedAt, item.UpdatedAt)
+	if err != nil {
+		return proxygroups.ProxyGroup{}, err
+	}
+	return item, nil
+}
+
+func (s *SQLiteStore) UpdateProxyGroup(id string, input proxygroups.CreateInput) (proxygroups.ProxyGroup, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	result, err := s.db.Exec(`
+		UPDATE proxy_groups
+		SET name = ?, group_kind = ?, config_json = ?, sort_order = ?, updated_at = ?
+		WHERE id = ?
+	`, strings.TrimSpace(input.Name), input.GroupKind, encodeJSON(cloneMap(input.Config)), input.SortOrder, now, id)
+	if err != nil {
+		return proxygroups.ProxyGroup{}, err
+	}
+	if rows, err := result.RowsAffected(); err != nil {
+		return proxygroups.ProxyGroup{}, err
+	} else if rows == 0 {
+		return proxygroups.ProxyGroup{}, errors.New("proxy group not found")
+	}
+	return s.findProxyGroup(id)
+}
+
+func (s *SQLiteStore) DeleteProxyGroup(id string) error {
+	result, err := s.db.Exec(`DELETE FROM proxy_groups WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	if rows, err := result.RowsAffected(); err != nil {
+		return err
+	} else if rows == 0 {
+		return errors.New("proxy group not found")
+	}
+	return nil
+}
+
+func (s *SQLiteStore) findProxyGroup(id string) (proxygroups.ProxyGroup, error) {
+	var item proxygroups.ProxyGroup
+	var configJSON string
+	err := s.db.QueryRow(`
+		SELECT id, name, group_kind, config_json, sort_order, created_at, updated_at
+		FROM proxy_groups
+		WHERE id = ?
+	`, id).Scan(&item.ID, &item.Name, &item.GroupKind, &configJSON, &item.SortOrder, &item.CreatedAt, &item.UpdatedAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return proxygroups.ProxyGroup{}, errors.New("proxy group not found")
+		}
+		return proxygroups.ProxyGroup{}, err
+	}
+	item.Config = decodeMap(configJSON)
+	return item, nil
+}
+
+func (s *SQLiteStore) ListDNSProviders() ([]dns.Provider, error) {
+	rows, err := s.db.Query(`
+		SELECT id, provider_kind, name, credentials_json, created_at, updated_at
+		FROM dns_providers
+		ORDER BY name ASC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var items []dns.Provider
+	for rows.Next() {
+		var item dns.Provider
+		var credentialsJSON string
+		if err := rows.Scan(&item.ID, &item.ProviderKind, &item.Name, &credentialsJSON, &item.CreatedAt, &item.UpdatedAt); err != nil {
+			return nil, err
+		}
+		item.Credentials = decodeMap(credentialsJSON)
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *SQLiteStore) CreateDNSProvider(input dns.CreateProviderInput) (dns.Provider, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	item := dns.Provider{
+		ID:           newID("dns"),
+		ProviderKind: input.ProviderKind,
+		Name:         strings.TrimSpace(input.Name),
+		Credentials:  cloneMap(input.Credentials),
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+	_, err := s.db.Exec(`
+		INSERT INTO dns_providers (id, provider_kind, name, credentials_json, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`, item.ID, item.ProviderKind, item.Name, encodeJSON(item.Credentials), item.CreatedAt, item.UpdatedAt)
+	if err != nil {
+		return dns.Provider{}, err
+	}
+	return item, nil
+}
+
+func (s *SQLiteStore) UpdateDNSProvider(id string, input dns.CreateProviderInput) (dns.Provider, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	result, err := s.db.Exec(`
+		UPDATE dns_providers
+		SET provider_kind = ?, name = ?, credentials_json = ?, updated_at = ?
+		WHERE id = ?
+	`, input.ProviderKind, strings.TrimSpace(input.Name), encodeJSON(cloneMap(input.Credentials)), now, id)
+	if err != nil {
+		return dns.Provider{}, err
+	}
+	if rows, err := result.RowsAffected(); err != nil {
+		return dns.Provider{}, err
+	} else if rows == 0 {
+		return dns.Provider{}, errors.New("dns provider not found")
+	}
+	return s.findDNSProvider(id)
+}
+
+func (s *SQLiteStore) DeleteDNSProvider(id string) error {
+	result, err := s.db.Exec(`DELETE FROM dns_providers WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	if rows, err := result.RowsAffected(); err != nil {
+		return err
+	} else if rows == 0 {
+		return errors.New("dns provider not found")
+	}
+	return nil
+}
+
+func (s *SQLiteStore) findDNSProvider(id string) (dns.Provider, error) {
+	var item dns.Provider
+	var credentialsJSON string
+	err := s.db.QueryRow(`
+		SELECT id, provider_kind, name, credentials_json, created_at, updated_at
+		FROM dns_providers
+		WHERE id = ?
+	`, id).Scan(&item.ID, &item.ProviderKind, &item.Name, &credentialsJSON, &item.CreatedAt, &item.UpdatedAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return dns.Provider{}, errors.New("dns provider not found")
+		}
+		return dns.Provider{}, err
+	}
+	item.Credentials = decodeMap(credentialsJSON)
+	return item, nil
+}
+
+func (s *SQLiteStore) ListCertificates() ([]certificates.Certificate, error) {
+	rows, err := s.db.Query(`
+		SELECT id, name, domain, provider_id, cert_pem, key_pem, auto_renew, auto_deploy, expires_at, created_at, updated_at
+		FROM certificates
+		ORDER BY domain ASC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var items []certificates.Certificate
+	for rows.Next() {
+		var item certificates.Certificate
+		var autoRenew int
+		var autoDeploy int
+		if err := rows.Scan(&item.ID, &item.Name, &item.Domain, &item.ProviderID, &item.CertPEM, &item.KeyPEM, &autoRenew, &autoDeploy, &item.ExpiresAt, &item.CreatedAt, &item.UpdatedAt); err != nil {
+			return nil, err
+		}
+		item.AutoRenew = autoRenew == 1
+		item.AutoDeploy = autoDeploy == 1
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *SQLiteStore) CreateCertificate(input certificates.CreateInput) (certificates.Certificate, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	item := certificates.Certificate{
+		ID:         newID("cert"),
+		Name:       strings.TrimSpace(input.Name),
+		Domain:     strings.TrimSpace(input.Domain),
+		ProviderID: input.ProviderID,
+		CertPEM:    input.CertPEM,
+		KeyPEM:     input.KeyPEM,
+		AutoRenew:  input.AutoRenew,
+		AutoDeploy: input.AutoDeploy,
+		ExpiresAt:  input.ExpiresAt,
+		CreatedAt:  now,
+		UpdatedAt:  now,
+	}
+	_, err := s.db.Exec(`
+		INSERT INTO certificates (id, name, domain, provider_id, cert_pem, key_pem, auto_renew, auto_deploy, expires_at, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, item.ID, item.Name, item.Domain, item.ProviderID, item.CertPEM, item.KeyPEM, boolToInt(item.AutoRenew), boolToInt(item.AutoDeploy), item.ExpiresAt, item.CreatedAt, item.UpdatedAt)
+	if err != nil {
+		return certificates.Certificate{}, err
+	}
+	return item, nil
+}
+
+func (s *SQLiteStore) UpdateCertificate(id string, input certificates.CreateInput) (certificates.Certificate, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	result, err := s.db.Exec(`
+		UPDATE certificates
+		SET name = ?, domain = ?, provider_id = ?, cert_pem = ?, key_pem = ?, auto_renew = ?, auto_deploy = ?, expires_at = ?, updated_at = ?
+		WHERE id = ?
+	`, strings.TrimSpace(input.Name), strings.TrimSpace(input.Domain), input.ProviderID, input.CertPEM, input.KeyPEM, boolToInt(input.AutoRenew), boolToInt(input.AutoDeploy), input.ExpiresAt, now, id)
+	if err != nil {
+		return certificates.Certificate{}, err
+	}
+	if rows, err := result.RowsAffected(); err != nil {
+		return certificates.Certificate{}, err
+	} else if rows == 0 {
+		return certificates.Certificate{}, errors.New("certificate not found")
+	}
+	return s.findCertificate(id)
+}
+
+func (s *SQLiteStore) DeleteCertificate(id string) error {
+	result, err := s.db.Exec(`DELETE FROM certificates WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	if rows, err := result.RowsAffected(); err != nil {
+		return err
+	} else if rows == 0 {
+		return errors.New("certificate not found")
+	}
+	return nil
+}
+
+func (s *SQLiteStore) findCertificate(id string) (certificates.Certificate, error) {
+	var item certificates.Certificate
+	var autoRenew int
+	var autoDeploy int
+	err := s.db.QueryRow(`
+		SELECT id, name, domain, provider_id, cert_pem, key_pem, auto_renew, auto_deploy, expires_at, created_at, updated_at
+		FROM certificates
+		WHERE id = ?
+	`, id).Scan(&item.ID, &item.Name, &item.Domain, &item.ProviderID, &item.CertPEM, &item.KeyPEM, &autoRenew, &autoDeploy, &item.ExpiresAt, &item.CreatedAt, &item.UpdatedAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return certificates.Certificate{}, errors.New("certificate not found")
+		}
+		return certificates.Certificate{}, err
+	}
+	item.AutoRenew = autoRenew == 1
+	item.AutoDeploy = autoDeploy == 1
+	return item, nil
+}
+
+func (s *SQLiteStore) ListNotificationChannels() ([]notifications.Channel, error) {
+	rows, err := s.db.Query(`
+		SELECT id, channel_kind, name, config_json, enabled, created_at, updated_at
+		FROM notifications
+		ORDER BY name ASC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var items []notifications.Channel
+	for rows.Next() {
+		var item notifications.Channel
+		var configJSON string
+		var enabled int
+		if err := rows.Scan(&item.ID, &item.ChannelKind, &item.Name, &configJSON, &enabled, &item.CreatedAt, &item.UpdatedAt); err != nil {
+			return nil, err
+		}
+		item.Config = decodeMap(configJSON)
+		item.Enabled = enabled == 1
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *SQLiteStore) CreateNotificationChannel(input notifications.CreateInput) (notifications.Channel, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	item := notifications.Channel{
+		ID:          newID("notify"),
+		ChannelKind: input.ChannelKind,
+		Name:        strings.TrimSpace(input.Name),
+		Config:      cloneMap(input.Config),
+		Enabled:     input.Enabled,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+	_, err := s.db.Exec(`
+		INSERT INTO notifications (id, channel_kind, name, config_json, enabled, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+	`, item.ID, item.ChannelKind, item.Name, encodeJSON(item.Config), boolToInt(item.Enabled), item.CreatedAt, item.UpdatedAt)
+	if err != nil {
+		return notifications.Channel{}, err
+	}
+	return item, nil
+}
+
+func (s *SQLiteStore) UpdateNotificationChannel(id string, input notifications.CreateInput) (notifications.Channel, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	result, err := s.db.Exec(`
+		UPDATE notifications
+		SET channel_kind = ?, name = ?, config_json = ?, enabled = ?, updated_at = ?
+		WHERE id = ?
+	`, input.ChannelKind, strings.TrimSpace(input.Name), encodeJSON(cloneMap(input.Config)), boolToInt(input.Enabled), now, id)
+	if err != nil {
+		return notifications.Channel{}, err
+	}
+	if rows, err := result.RowsAffected(); err != nil {
+		return notifications.Channel{}, err
+	} else if rows == 0 {
+		return notifications.Channel{}, errors.New("notification channel not found")
+	}
+	return s.findNotificationChannel(id)
+}
+
+func (s *SQLiteStore) DeleteNotificationChannel(id string) error {
+	result, err := s.db.Exec(`DELETE FROM notifications WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	if rows, err := result.RowsAffected(); err != nil {
+		return err
+	} else if rows == 0 {
+		return errors.New("notification channel not found")
+	}
+	return nil
+}
+
+func (s *SQLiteStore) findNotificationChannel(id string) (notifications.Channel, error) {
+	var item notifications.Channel
+	var configJSON string
+	var enabled int
+	err := s.db.QueryRow(`
+		SELECT id, channel_kind, name, config_json, enabled, created_at, updated_at
+		FROM notifications
+		WHERE id = ?
+	`, id).Scan(&item.ID, &item.ChannelKind, &item.Name, &configJSON, &enabled, &item.CreatedAt, &item.UpdatedAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return notifications.Channel{}, errors.New("notification channel not found")
+		}
+		return notifications.Channel{}, err
+	}
+	item.Config = decodeMap(configJSON)
+	item.Enabled = enabled == 1
+	return item, nil
+}
+
+func (s *SQLiteStore) ListBackups() ([]backups.Backup, error) {
+	rows, err := s.db.Query(`
+		SELECT id, backup_kind, file_path, summary, created_at
+		FROM backups
+		ORDER BY created_at DESC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var items []backups.Backup
+	for rows.Next() {
+		var item backups.Backup
+		if err := rows.Scan(&item.ID, &item.BackupKind, &item.FilePath, &item.Summary, &item.CreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *SQLiteStore) CreateBackup(input backups.CreateInput) (backups.Backup, error) {
+	item := backups.Backup{
+		ID:         newID("backup"),
+		BackupKind: input.BackupKind,
+		FilePath:   strings.TrimSpace(input.FilePath),
+		Summary:    input.Summary,
+		CreatedAt:  time.Now().UTC().Format(time.RFC3339),
+	}
+	_, err := s.db.Exec(`
+		INSERT INTO backups (id, backup_kind, file_path, summary, created_at)
+		VALUES (?, ?, ?, ?, ?)
+	`, item.ID, item.BackupKind, item.FilePath, item.Summary, item.CreatedAt)
+	if err != nil {
+		return backups.Backup{}, err
+	}
+	return item, nil
+}
+
+func (s *SQLiteStore) DeleteBackup(id string) error {
+	result, err := s.db.Exec(`DELETE FROM backups WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	if rows, err := result.RowsAffected(); err != nil {
+		return err
+	} else if rows == 0 {
+		return errors.New("backup not found")
+	}
+	return nil
+}
+
+func (s *SQLiteStore) ListSystemSettings() ([]system.Setting, error) {
+	rows, err := s.db.Query(`
+		SELECT key, value_json, updated_at
+		FROM system_settings
+		ORDER BY key ASC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var items []system.Setting
+	for rows.Next() {
+		var item system.Setting
+		var valueJSON string
+		if err := rows.Scan(&item.Key, &valueJSON, &item.UpdatedAt); err != nil {
+			return nil, err
+		}
+		item.Value = decodeMap(valueJSON)
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *SQLiteStore) UpsertSystemSetting(key string, input system.UpsertSettingInput) (system.Setting, error) {
+	item := system.Setting{
+		Key:       strings.TrimSpace(key),
+		Value:     cloneMap(input.Value),
+		UpdatedAt: time.Now().UTC().Format(time.RFC3339),
+	}
+	_, err := s.db.Exec(`
+		INSERT INTO system_settings (key, value_json, updated_at)
+		VALUES (?, ?, ?)
+		ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at
+	`, item.Key, encodeJSON(item.Value), item.UpdatedAt)
+	if err != nil {
+		return system.Setting{}, err
+	}
+	return item, nil
+}
+
+func (s *SQLiteStore) DeleteSystemSetting(key string) error {
+	result, err := s.db.Exec(`DELETE FROM system_settings WHERE key = ?`, key)
+	if err != nil {
+		return err
+	}
+	if rows, err := result.RowsAffected(); err != nil {
+		return err
+	} else if rows == 0 {
+		return errors.New("system setting not found")
+	}
+	return nil
+}
+
+func (s *SQLiteStore) ListTrafficSamples(scope string, scopeID string) ([]traffic.Sample, error) {
+	query := `
+		SELECT id, sample_scope, scope_id, rx_bytes, tx_bytes, rate_json, recorded_at
+		FROM traffic_samples
+	`
+	var args []any
+	var filters []string
+	if strings.TrimSpace(scope) != "" {
+		filters = append(filters, "sample_scope = ?")
+		args = append(args, scope)
+	}
+	if strings.TrimSpace(scopeID) != "" {
+		filters = append(filters, "scope_id = ?")
+		args = append(args, scopeID)
+	}
+	if len(filters) > 0 {
+		query += " WHERE " + strings.Join(filters, " AND ")
+	}
+	query += " ORDER BY recorded_at DESC LIMIT 500"
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var items []traffic.Sample
+	for rows.Next() {
+		var item traffic.Sample
+		var rateJSON string
+		if err := rows.Scan(&item.ID, &item.SampleScope, &item.ScopeID, &item.RXBytes, &item.TXBytes, &rateJSON, &item.RecordedAt); err != nil {
+			return nil, err
+		}
+		item.Rate = decodeMap(rateJSON)
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *SQLiteStore) CreateTrafficSample(input traffic.CreateSampleInput) (traffic.Sample, error) {
+	item := traffic.Sample{
+		ID:          newID("traffic"),
+		SampleScope: strings.TrimSpace(input.SampleScope),
+		ScopeID:     strings.TrimSpace(input.ScopeID),
+		RXBytes:     input.RXBytes,
+		TXBytes:     input.TXBytes,
+		Rate:        cloneMap(input.Rate),
+		RecordedAt:  time.Now().UTC().Format(time.RFC3339),
+	}
+	_, err := s.db.Exec(`
+		INSERT INTO traffic_samples (id, sample_scope, scope_id, rx_bytes, tx_bytes, rate_json, recorded_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+	`, item.ID, item.SampleScope, item.ScopeID, item.RXBytes, item.TXBytes, encodeJSON(item.Rate), item.RecordedAt)
+	if err != nil {
+		return traffic.Sample{}, err
+	}
 	return item, nil
 }
 

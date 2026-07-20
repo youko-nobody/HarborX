@@ -325,6 +325,71 @@ func NewRouter(deps Dependencies) http.Handler {
 		writeJSON(w, http.StatusOK, deps.ProxyGroups.Summary())
 	})
 
+	mux.HandleFunc("/api/v1/proxy-groups", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			items, err := deps.ProxyGroups.List()
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, items)
+		case http.MethodPost:
+			if !requireAuth(w, r, deps) {
+				return
+			}
+			var input proxygroups.CreateInput
+			if err := decodeJSON(r, &input); err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			item, err := deps.ProxyGroups.Create(input)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			writeJSON(w, http.StatusCreated, item)
+		default:
+			writeMethodNotAllowed(w, http.MethodGet, http.MethodPost)
+		}
+	})
+
+	mux.HandleFunc("/api/v1/proxy-groups/", func(w http.ResponseWriter, r *http.Request) {
+		id := strings.TrimPrefix(r.URL.Path, "/api/v1/proxy-groups/")
+		if id == "" {
+			writeError(w, http.StatusBadRequest, errors.New("proxy group id is required"))
+			return
+		}
+		switch r.Method {
+		case http.MethodPut:
+			if !requireAuth(w, r, deps) {
+				return
+			}
+			var input proxygroups.CreateInput
+			if err := decodeJSON(r, &input); err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			item, err := deps.ProxyGroups.Update(id, input)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, item)
+		case http.MethodDelete:
+			if !requireAuth(w, r, deps) {
+				return
+			}
+			if err := deps.ProxyGroups.Delete(id); err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			writeMethodNotAllowed(w, http.MethodPut, http.MethodDelete)
+		}
+	})
+
 	mux.HandleFunc("/api/v1/xray/summary", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, deps.Xray.Summary())
 	})
@@ -346,28 +411,452 @@ func NewRouter(deps Dependencies) http.Handler {
 		writeJSON(w, http.StatusOK, deps.Remote.Summary())
 	})
 
+	mux.HandleFunc("/api/v1/remote/servers", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			items, err := deps.Remote.ListServers()
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, items)
+		case http.MethodPost:
+			if !requireAuth(w, r, deps) {
+				return
+			}
+			var input remote.CreateServerInput
+			if err := decodeJSON(r, &input); err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			enrollment, err := deps.Remote.CreateServer(input)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			writeJSON(w, http.StatusCreated, enrollment)
+		default:
+			writeMethodNotAllowed(w, http.MethodGet, http.MethodPost)
+		}
+	})
+
+	mux.HandleFunc("/api/v1/remote/servers/", func(w http.ResponseWriter, r *http.Request) {
+		path := strings.TrimPrefix(r.URL.Path, "/api/v1/remote/servers/")
+		parts := strings.Split(strings.Trim(path, "/"), "/")
+		if len(parts) == 0 || parts[0] == "" {
+			writeError(w, http.StatusBadRequest, errors.New("remote server id is required"))
+			return
+		}
+
+		if len(parts) == 1 {
+			switch r.Method {
+			case http.MethodPut:
+				if !requireAuth(w, r, deps) {
+					return
+				}
+				var input remote.UpdateServerInput
+				if err := decodeJSON(r, &input); err != nil {
+					writeError(w, http.StatusBadRequest, err)
+					return
+				}
+				item, err := deps.Remote.UpdateServer(parts[0], input)
+				if err != nil {
+					writeError(w, http.StatusBadRequest, err)
+					return
+				}
+				writeJSON(w, http.StatusOK, item)
+			case http.MethodDelete:
+				if !requireAuth(w, r, deps) {
+					return
+				}
+				if err := deps.Remote.DeleteServer(parts[0]); err != nil {
+					writeError(w, http.StatusBadRequest, err)
+					return
+				}
+				w.WriteHeader(http.StatusNoContent)
+			default:
+				writeMethodNotAllowed(w, http.MethodPut, http.MethodDelete)
+			}
+			return
+		}
+
+		if len(parts) == 2 && parts[1] == "tasks" {
+			switch r.Method {
+			case http.MethodGet:
+				items, err := deps.Remote.ListTasks(parts[0])
+				if err != nil {
+					writeError(w, http.StatusBadRequest, err)
+					return
+				}
+				writeJSON(w, http.StatusOK, items)
+			case http.MethodPost:
+				if !requireAuth(w, r, deps) {
+					return
+				}
+				var input remote.CreateTaskInput
+				if err := decodeJSON(r, &input); err != nil {
+					writeError(w, http.StatusBadRequest, err)
+					return
+				}
+				item, err := deps.Remote.CreateTask(parts[0], input)
+				if err != nil {
+					writeError(w, http.StatusBadRequest, err)
+					return
+				}
+				writeJSON(w, http.StatusCreated, item)
+			default:
+				writeMethodNotAllowed(w, http.MethodGet, http.MethodPost)
+			}
+			return
+		}
+
+		writeError(w, http.StatusNotFound, errors.New("remote server action not found"))
+	})
+
 	mux.HandleFunc("/api/v1/traffic/summary", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, deps.Traffic.Summary())
+	})
+
+	mux.HandleFunc("/api/v1/traffic/samples", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			items, err := deps.Traffic.ListSamples(r.URL.Query().Get("scope"), r.URL.Query().Get("scopeId"))
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, items)
+		case http.MethodPost:
+			if !requireAuth(w, r, deps) {
+				return
+			}
+			var input traffic.CreateSampleInput
+			if err := decodeJSON(r, &input); err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			item, err := deps.Traffic.CreateSample(input)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			writeJSON(w, http.StatusCreated, item)
+		default:
+			writeMethodNotAllowed(w, http.MethodGet, http.MethodPost)
+		}
 	})
 
 	mux.HandleFunc("/api/v1/certificates/summary", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, deps.Certificates.Summary())
 	})
 
+	mux.HandleFunc("/api/v1/certificates", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			items, err := deps.Certificates.List()
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, items)
+		case http.MethodPost:
+			if !requireAuth(w, r, deps) {
+				return
+			}
+			var input certificates.CreateInput
+			if err := decodeJSON(r, &input); err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			item, err := deps.Certificates.Create(input)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			writeJSON(w, http.StatusCreated, item)
+		default:
+			writeMethodNotAllowed(w, http.MethodGet, http.MethodPost)
+		}
+	})
+
+	mux.HandleFunc("/api/v1/certificates/", func(w http.ResponseWriter, r *http.Request) {
+		id := strings.TrimPrefix(r.URL.Path, "/api/v1/certificates/")
+		if id == "" {
+			writeError(w, http.StatusBadRequest, errors.New("certificate id is required"))
+			return
+		}
+		switch r.Method {
+		case http.MethodPut:
+			if !requireAuth(w, r, deps) {
+				return
+			}
+			var input certificates.CreateInput
+			if err := decodeJSON(r, &input); err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			item, err := deps.Certificates.Update(id, input)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, item)
+		case http.MethodDelete:
+			if !requireAuth(w, r, deps) {
+				return
+			}
+			if err := deps.Certificates.Delete(id); err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			writeMethodNotAllowed(w, http.MethodPut, http.MethodDelete)
+		}
+	})
+
 	mux.HandleFunc("/api/v1/dns/summary", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, deps.DNS.Summary())
+	})
+
+	mux.HandleFunc("/api/v1/dns/providers", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			items, err := deps.DNS.ListProviders()
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, items)
+		case http.MethodPost:
+			if !requireAuth(w, r, deps) {
+				return
+			}
+			var input dns.CreateProviderInput
+			if err := decodeJSON(r, &input); err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			item, err := deps.DNS.CreateProvider(input)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			writeJSON(w, http.StatusCreated, item)
+		default:
+			writeMethodNotAllowed(w, http.MethodGet, http.MethodPost)
+		}
+	})
+
+	mux.HandleFunc("/api/v1/dns/providers/", func(w http.ResponseWriter, r *http.Request) {
+		id := strings.TrimPrefix(r.URL.Path, "/api/v1/dns/providers/")
+		if id == "" {
+			writeError(w, http.StatusBadRequest, errors.New("dns provider id is required"))
+			return
+		}
+		switch r.Method {
+		case http.MethodPut:
+			if !requireAuth(w, r, deps) {
+				return
+			}
+			var input dns.CreateProviderInput
+			if err := decodeJSON(r, &input); err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			item, err := deps.DNS.UpdateProvider(id, input)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, item)
+		case http.MethodDelete:
+			if !requireAuth(w, r, deps) {
+				return
+			}
+			if err := deps.DNS.DeleteProvider(id); err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			writeMethodNotAllowed(w, http.MethodPut, http.MethodDelete)
+		}
 	})
 
 	mux.HandleFunc("/api/v1/notifications/summary", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, deps.Notifications.Summary())
 	})
 
+	mux.HandleFunc("/api/v1/notifications/channels", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			items, err := deps.Notifications.ListChannels()
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, items)
+		case http.MethodPost:
+			if !requireAuth(w, r, deps) {
+				return
+			}
+			var input notifications.CreateInput
+			if err := decodeJSON(r, &input); err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			item, err := deps.Notifications.CreateChannel(input)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			writeJSON(w, http.StatusCreated, item)
+		default:
+			writeMethodNotAllowed(w, http.MethodGet, http.MethodPost)
+		}
+	})
+
+	mux.HandleFunc("/api/v1/notifications/channels/", func(w http.ResponseWriter, r *http.Request) {
+		id := strings.TrimPrefix(r.URL.Path, "/api/v1/notifications/channels/")
+		if id == "" {
+			writeError(w, http.StatusBadRequest, errors.New("notification channel id is required"))
+			return
+		}
+		switch r.Method {
+		case http.MethodPut:
+			if !requireAuth(w, r, deps) {
+				return
+			}
+			var input notifications.CreateInput
+			if err := decodeJSON(r, &input); err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			item, err := deps.Notifications.UpdateChannel(id, input)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, item)
+		case http.MethodDelete:
+			if !requireAuth(w, r, deps) {
+				return
+			}
+			if err := deps.Notifications.DeleteChannel(id); err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			writeMethodNotAllowed(w, http.MethodPut, http.MethodDelete)
+		}
+	})
+
 	mux.HandleFunc("/api/v1/backups/summary", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, deps.Backups.Summary())
 	})
 
+	mux.HandleFunc("/api/v1/backups", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			items, err := deps.Backups.List()
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, items)
+		case http.MethodPost:
+			if !requireAuth(w, r, deps) {
+				return
+			}
+			var input backups.CreateInput
+			if err := decodeJSON(r, &input); err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			item, err := deps.Backups.Create(input)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			writeJSON(w, http.StatusCreated, item)
+		default:
+			writeMethodNotAllowed(w, http.MethodGet, http.MethodPost)
+		}
+	})
+
+	mux.HandleFunc("/api/v1/backups/", func(w http.ResponseWriter, r *http.Request) {
+		id := strings.TrimPrefix(r.URL.Path, "/api/v1/backups/")
+		if id == "" {
+			writeError(w, http.StatusBadRequest, errors.New("backup id is required"))
+			return
+		}
+		if r.Method != http.MethodDelete {
+			writeMethodNotAllowed(w, http.MethodDelete)
+			return
+		}
+		if !requireAuth(w, r, deps) {
+			return
+		}
+		if err := deps.Backups.Delete(id); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+
 	mux.HandleFunc("/api/v1/system/summary", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, deps.System.Summary())
+	})
+
+	mux.HandleFunc("/api/v1/system/settings", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writeMethodNotAllowed(w, http.MethodGet)
+			return
+		}
+		items, err := deps.System.ListSettings()
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, items)
+	})
+
+	mux.HandleFunc("/api/v1/system/settings/", func(w http.ResponseWriter, r *http.Request) {
+		key := strings.TrimPrefix(r.URL.Path, "/api/v1/system/settings/")
+		if key == "" {
+			writeError(w, http.StatusBadRequest, errors.New("system setting key is required"))
+			return
+		}
+		switch r.Method {
+		case http.MethodPut:
+			if !requireAuth(w, r, deps) {
+				return
+			}
+			var input system.UpsertSettingInput
+			if err := decodeJSON(r, &input); err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			item, err := deps.System.UpsertSetting(key, input)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, item)
+		case http.MethodDelete:
+			if !requireAuth(w, r, deps) {
+				return
+			}
+			if err := deps.System.DeleteSetting(key); err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			writeMethodNotAllowed(w, http.MethodPut, http.MethodDelete)
+		}
 	})
 
 	mux.HandleFunc("/", frontendHandler(deps.WebDistDir))

@@ -45,15 +45,15 @@ func New() (App, error) {
 	subscriptionsService := subscriptions.NewService(store)
 	rulesService := rules.NewService(store)
 	templatesService := templates.NewService(store)
-	proxyGroupsService := proxygroups.NewService()
+	proxyGroupsService := proxygroups.NewService(store)
 	xrayService := xray.NewService(store)
-	remoteService := remote.NewService()
-	trafficService := traffic.NewService()
-	certificatesService := certificates.NewService()
-	dnsService := dns.NewService()
-	notificationsService := notifications.NewService()
-	backupsService := backups.NewService()
-	systemService := system.NewService()
+	remoteService := remote.NewService(store)
+	trafficService := traffic.NewService(store)
+	certificatesService := certificates.NewService(store)
+	dnsService := dns.NewService(store)
+	notificationsService := notifications.NewService(store)
+	backupsService := backups.NewService(store)
+	systemService := system.NewService(store)
 
 	router := httpapi.NewRouter(httpapi.Dependencies{
 		Catalog:       catalogService,

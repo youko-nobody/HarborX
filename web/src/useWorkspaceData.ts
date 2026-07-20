@@ -1,13 +1,30 @@
 import { useEffect, useState } from "react";
 import {
+  createBackup,
+  createCertificate,
+  createDNSProvider,
   createNode,
+  createNotificationChannel,
+  createProxyGroup,
+  createRemoteServer,
+  createRemoteTask,
   createRuleSet,
   createSubscription,
   createTemplate,
+  createTrafficSample,
+  deleteBackup,
+  deleteCertificate,
+  deleteDNSProvider,
   deleteNode,
+  deleteNotificationChannel,
+  deleteProxyGroup,
+  deleteRemoteServer,
   deleteRuleSet,
+  deleteSystemSetting,
   loadWorkspace,
+  updateRemoteServer,
   updateRuleSet,
+  upsertSystemSetting,
   type AppBootstrap,
 } from "./api";
 
@@ -45,17 +62,19 @@ export function useWorkspaceData() {
     void refresh();
   }, []);
 
-  async function runMutation(action: () => Promise<unknown>) {
+  async function runMutation<T>(action: () => Promise<T>) {
     setState((current) => ({ ...current, busy: true, error: null }));
     try {
-      await action();
+      const result = await action();
       await refresh();
+      return result;
     } catch (error) {
       setState((current) => ({
         ...current,
         busy: false,
         error: error instanceof Error ? error.message : "Unknown error",
       }));
+      throw error;
     }
   }
 
@@ -71,5 +90,27 @@ export function useWorkspaceData() {
     createTemplate: (input: Parameters<typeof createTemplate>[0]) => runMutation(() => createTemplate(input)),
     createSubscription: (input: Parameters<typeof createSubscription>[0]) =>
       runMutation(() => createSubscription(input)),
+    createRemoteServer: (input: Parameters<typeof createRemoteServer>[0]) => runMutation(() => createRemoteServer(input)),
+    updateRemoteServer: (id: string, input: Parameters<typeof updateRemoteServer>[1]) =>
+      runMutation(() => updateRemoteServer(id, input)),
+    deleteRemoteServer: (id: string) => runMutation(() => deleteRemoteServer(id)),
+    createRemoteTask: (serverId: string, input: Parameters<typeof createRemoteTask>[1]) =>
+      runMutation(() => createRemoteTask(serverId, input)),
+    createProxyGroup: (input: Parameters<typeof createProxyGroup>[0]) => runMutation(() => createProxyGroup(input)),
+    deleteProxyGroup: (id: string) => runMutation(() => deleteProxyGroup(id)),
+    createDNSProvider: (input: Parameters<typeof createDNSProvider>[0]) => runMutation(() => createDNSProvider(input)),
+    deleteDNSProvider: (id: string) => runMutation(() => deleteDNSProvider(id)),
+    createCertificate: (input: Parameters<typeof createCertificate>[0]) => runMutation(() => createCertificate(input)),
+    deleteCertificate: (id: string) => runMutation(() => deleteCertificate(id)),
+    createNotificationChannel: (input: Parameters<typeof createNotificationChannel>[0]) =>
+      runMutation(() => createNotificationChannel(input)),
+    deleteNotificationChannel: (id: string) => runMutation(() => deleteNotificationChannel(id)),
+    createBackup: (input: Parameters<typeof createBackup>[0]) => runMutation(() => createBackup(input)),
+    deleteBackup: (id: string) => runMutation(() => deleteBackup(id)),
+    upsertSystemSetting: (key: string, input: Parameters<typeof upsertSystemSetting>[1]) =>
+      runMutation(() => upsertSystemSetting(key, input)),
+    deleteSystemSetting: (key: string) => runMutation(() => deleteSystemSetting(key)),
+    createTrafficSample: (input: Parameters<typeof createTrafficSample>[0]) =>
+      runMutation(() => createTrafficSample(input)),
   };
 }

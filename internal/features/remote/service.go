@@ -1,14 +1,82 @@
 package remote
 
+import (
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"errors"
+	"fmt"
+	"strings"
+)
+
 type Summary struct {
 	ConnectionModes []string `json:"connectionModes"`
 	Capabilities    []string `json:"capabilities"`
 }
 
-type Service struct{}
+type RemoteServer struct {
+	ID             string         `json:"id"`
+	Name           string         `json:"name"`
+	Host           string         `json:"host"`
+	ConnectionMode string         `json:"connectionMode"`
+	Status         string         `json:"status"`
+	Metadata       map[string]any `json:"metadata"`
+	CreatedAt      string         `json:"createdAt"`
+	UpdatedAt      string         `json:"updatedAt"`
+}
 
-func NewService() Service {
-	return Service{}
+type CreateServerInput struct {
+	Name           string         `json:"name"`
+	Host           string         `json:"host"`
+	ConnectionMode string         `json:"connectionMode"`
+	Metadata       map[string]any `json:"metadata"`
+}
+
+type UpdateServerInput struct {
+	Name           string         `json:"name"`
+	Host           string         `json:"host"`
+	ConnectionMode string         `json:"connectionMode"`
+	Status         string         `json:"status"`
+	Metadata       map[string]any `json:"metadata"`
+}
+
+type ServerEnrollment struct {
+	Server      RemoteServer `json:"server"`
+	ServerToken string       `json:"serverToken"`
+	AgentToken  string       `json:"agentToken"`
+}
+
+type RemoteTask struct {
+	ID             string         `json:"id"`
+	RemoteServerID string         `json:"remoteServerId"`
+	TaskKind       string         `json:"taskKind"`
+	Status         string         `json:"status"`
+	Payload        map[string]any `json:"payload"`
+	OutputText     string         `json:"outputText"`
+	CreatedAt      string         `json:"createdAt"`
+	UpdatedAt      string         `json:"updatedAt"`
+}
+
+type CreateTaskInput struct {
+	TaskKind string         `json:"taskKind"`
+	Payload  map[string]any `json:"payload"`
+}
+
+type Repository interface {
+	ListRemoteServers() ([]RemoteServer, error)
+	CreateRemoteServer(input CreateServerInput, serverTokenHash string, agentTokenHash string) (RemoteServer, error)
+	UpdateRemoteServer(id string, input UpdateServerInput) (RemoteServer, error)
+	DeleteRemoteServer(id string) error
+	ListRemoteTasks(serverID string) ([]RemoteTask, error)
+	CreateRemoteTask(serverID string, input CreateTaskInput) (RemoteTask, error)
+}
+
+type Service struct {
+	repo Repository
+}
+
+func NewService(repo Repository) Service {
+	return Service{repo: repo}
 }
 
 func (Service) Summary() Summary {
@@ -25,3 +93,139 @@ func (Service) Summary() Summary {
 	}
 }
 
+func (s Service) ListServers() ([]RemoteServer, error) {
+	if s.repo == nil {
+		return nil, errors.New("remote repository is not configured")
+	}
+	return s.repo.ListRemoteServers()
+}
+
+func (s Service) CreateServer(input CreateServerInput) (ServerEnrollment, error) {
+	if s.repo == nil {
+		return ServerEnrollment{}, errors.New("remote repository is not configured")
+	}
+	if err := validateServerInput(input.Name, input.Host, input.ConnectionMode); err != nil {
+		return ServerEnrollment{}, err
+	}
+	serverToken, serverTokenHash, err := newToken("hxs")
+	if err != nil {
+		return ServerEnrollment{}, err
+	}
+	agentToken, agentTokenHash, err := newToken("hxa")
+	if err != nil {
+		return ServerEnrollment{}, err
+	}
+	server, err := s.repo.CreateRemoteServer(input, serverTokenHash, agentTokenHash)
+	if err != nil {
+		return ServerEnrollment{}, err
+	}
+	return ServerEnrollment{Server: server, ServerToken: serverToken, AgentToken: agentToken}, nil
+}
+
+func (s Service) UpdateServer(id string, input UpdateServerInput) (RemoteServer, error) {
+	if s.repo == nil {
+		return RemoteServer{}, errors.New("remote repository is not configured")
+	}
+	if strings.TrimSpace(id) == "" {
+		return RemoteServer{}, errors.New("remote server id is required")
+	}
+	if err := validateServerInput(input.Name, input.Host, input.ConnectionMode); err != nil {
+		return RemoteServer{}, err
+	}
+	if strings.TrimSpace(input.Status) == "" {
+		input.Status = "pending"
+	}
+	if !supportedStatus(input.Status) {
+		return RemoteServer{}, errors.New("unsupported remote server status")
+	}
+	return s.repo.UpdateRemoteServer(id, input)
+}
+
+func (s Service) DeleteServer(id string) error {
+	if s.repo == nil {
+		return errors.New("remote repository is not configured")
+	}
+	if strings.TrimSpace(id) == "" {
+		return errors.New("remote server id is required")
+	}
+	return s.repo.DeleteRemoteServer(id)
+}
+
+func (s Service) ListTasks(serverID string) ([]RemoteTask, error) {
+	if s.repo == nil {
+		return nil, errors.New("remote repository is not configured")
+	}
+	if strings.TrimSpace(serverID) == "" {
+		return nil, errors.New("remote server id is required")
+	}
+	return s.repo.ListRemoteTasks(serverID)
+}
+
+func (s Service) CreateTask(serverID string, input CreateTaskInput) (RemoteTask, error) {
+	if s.repo == nil {
+		return RemoteTask{}, errors.New("remote repository is not configured")
+	}
+	if strings.TrimSpace(serverID) == "" {
+		return RemoteTask{}, errors.New("remote server id is required")
+	}
+	if strings.TrimSpace(input.TaskKind) == "" {
+		return RemoteTask{}, errors.New("remote task kind is required")
+	}
+	if !supportedTaskKind(input.TaskKind) {
+		return RemoteTask{}, errors.New("unsupported remote task kind")
+	}
+	return s.repo.CreateRemoteTask(serverID, input)
+}
+
+func validateServerInput(name string, host string, connectionMode string) error {
+	if strings.TrimSpace(name) == "" {
+		return errors.New("remote server name is required")
+	}
+	if strings.TrimSpace(host) == "" {
+		return errors.New("remote server host is required")
+	}
+	if strings.TrimSpace(connectionMode) == "" {
+		return errors.New("remote server connection mode is required")
+	}
+	if !supportedConnectionMode(connectionMode) {
+		return errors.New("unsupported remote server connection mode")
+	}
+	return nil
+}
+
+func supportedConnectionMode(value string) bool {
+	switch value {
+	case "websocket", "http", "pull":
+		return true
+	default:
+		return false
+	}
+}
+
+func supportedStatus(value string) bool {
+	switch value {
+	case "pending", "online", "offline", "maintenance", "disabled":
+		return true
+	default:
+		return false
+	}
+}
+
+func supportedTaskKind(value string) bool {
+	switch value {
+	case "install-xray", "restart-xray", "reload-config", "install-nginx", "renew-certificate", "install-warp", "shell-script":
+		return true
+	default:
+		return false
+	}
+}
+
+func newToken(prefix string) (string, string, error) {
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		return "", "", err
+	}
+	token := fmt.Sprintf("%s_%s", prefix, base64.RawURLEncoding.EncodeToString(raw))
+	sum := sha256.Sum256([]byte(token))
+	return token, base64.RawStdEncoding.EncodeToString(sum[:]), nil
+}

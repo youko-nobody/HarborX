@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from "react";
 import {
+  listRemoteTasks,
   previewSubscription,
   previewXray,
   getAuthToken,
@@ -7,6 +8,8 @@ import {
   setAuthToken,
   subscriptionDownloadURL,
   type AuthUser,
+  type RemoteServerEnrollment,
+  type RemoteTaskRecord,
   validateRuleSet,
   type RenderedSubscription,
   type RuleRecord,
@@ -52,6 +55,23 @@ export function App() {
     createSubscription,
     createTemplate,
     deleteNode,
+    createRemoteServer,
+    updateRemoteServer,
+    deleteRemoteServer,
+    createRemoteTask,
+    createProxyGroup,
+    deleteProxyGroup,
+    createDNSProvider,
+    deleteDNSProvider,
+    createCertificate,
+    deleteCertificate,
+    createNotificationChannel,
+    deleteNotificationChannel,
+    createBackup,
+    deleteBackup,
+    upsertSystemSetting,
+    deleteSystemSetting,
+    createTrafficSample,
   } = useWorkspaceData();
   const modules = data?.modules ?? [];
   const starterRules = data?.rules.defaultRules ?? [];
@@ -60,6 +80,14 @@ export function App() {
   const nodes = data?.nodes ?? [];
   const ruleSets = data?.ruleSets ?? [];
   const subscriptions = data?.subscriptions ?? [];
+  const remoteServers = data?.remoteServers ?? [];
+  const proxyGroups = data?.proxyGroups ?? [];
+  const dnsProviders = data?.dnsProviders ?? [];
+  const certificates = data?.certificates ?? [];
+  const notificationChannels = data?.notificationChannels ?? [];
+  const backups = data?.backups ?? [];
+  const systemSettings = data?.systemSettings ?? [];
+  const trafficSamples = data?.trafficSamples ?? [];
   const ruleTypes = data?.rules.ruleTypes ?? [];
 
   const [nodeName, setNodeName] = useState("");
@@ -93,6 +121,33 @@ export function App() {
   const [authUsername, setAuthUsername] = useState("admin");
   const [authPassword, setAuthPassword] = useState("");
   const [authError, setAuthError] = useState<string | null>(null);
+  const [remoteName, setRemoteName] = useState("Tokyo Edge VPS");
+  const [remoteHost, setRemoteHost] = useState("");
+  const [remoteConnectionMode, setRemoteConnectionMode] = useState("pull");
+  const [remoteTags, setRemoteTags] = useState("edge,xray");
+  const [remoteEnrollment, setRemoteEnrollment] = useState<RemoteServerEnrollment | null>(null);
+  const [remoteTasks, setRemoteTasks] = useState<Record<string, RemoteTaskRecord[]>>({});
+  const [remoteTaskKind, setRemoteTaskKind] = useState("reload-config");
+  const [remoteTaskPayload, setRemoteTaskPayload] = useState('{"service":"xray"}');
+  const [remoteError, setRemoteError] = useState<string | null>(null);
+  const [proxyGroupName, setProxyGroupName] = useState("Auto");
+  const [proxyGroupKind, setProxyGroupKind] = useState("url-test");
+  const [proxyGroupConfig, setProxyGroupConfig] = useState('{"interval":300,"url":"https://www.gstatic.com/generate_204"}');
+  const [dnsProviderName, setDNSProviderName] = useState("Cloudflare Main");
+  const [dnsProviderKind, setDNSProviderKind] = useState("cloudflare");
+  const [dnsCredentials, setDNSCredentials] = useState('{"token":"replace-me"}');
+  const [certificateName, setCertificateName] = useState("Wildcard Cert");
+  const [certificateDomain, setCertificateDomain] = useState("*.example.com");
+  const [notificationName, setNotificationName] = useState("Telegram Ops");
+  const [notificationConfig, setNotificationConfig] = useState('{"botToken":"replace-me","chatId":"replace-me"}');
+  const [backupPath, setBackupPath] = useState("data/backups/manual.harborx.json");
+  const [settingKey, setSettingKey] = useState("ui.theme");
+  const [settingValue, setSettingValue] = useState('{"theme":"sand","refreshSeconds":30}');
+  const [trafficScope, setTrafficScope] = useState("server");
+  const [trafficScopeID, setTrafficScopeID] = useState("local");
+  const [trafficRX, setTrafficRX] = useState("0");
+  const [trafficTX, setTrafficTX] = useState("0");
+  const [opsError, setOpsError] = useState<string | null>(null);
 
   const isAuthenticated = Boolean(getAuthToken());
 
@@ -248,6 +303,152 @@ export function App() {
       setXrayPreview(await previewXray());
     } catch (error) {
       setXrayError(error instanceof Error ? error.message : "Failed to preview Xray config");
+    }
+  }
+
+  async function handleCreateRemoteServer(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setRemoteError(null);
+    try {
+      const enrollment = await createRemoteServer({
+        name: remoteName,
+        host: remoteHost,
+        connectionMode: remoteConnectionMode,
+        metadata: { tags: splitCSV(remoteTags) },
+      });
+      setRemoteEnrollment(enrollment);
+      setRemoteName("");
+      setRemoteHost("");
+      setRemoteTags("");
+    } catch (error) {
+      setRemoteError(error instanceof Error ? error.message : "Failed to create remote server");
+    }
+  }
+
+  async function handleSetRemoteStatus(id: string, status: string) {
+    const item = remoteServers.find((server) => server.id === id);
+    if (!item) {
+      return;
+    }
+    await updateRemoteServer(id, {
+      name: item.name,
+      host: item.host,
+      connectionMode: item.connectionMode,
+      status,
+      metadata: item.metadata,
+    });
+  }
+
+  async function handleLoadRemoteTasks(serverId: string) {
+    setRemoteError(null);
+    try {
+      const items = await listRemoteTasks(serverId);
+      setRemoteTasks((current) => ({ ...current, [serverId]: items }));
+    } catch (error) {
+      setRemoteError(error instanceof Error ? error.message : "Failed to load remote tasks");
+    }
+  }
+
+  async function handleCreateRemoteTask(serverId: string) {
+    setRemoteError(null);
+    try {
+      const payload = parseJSONObject(remoteTaskPayload);
+      await createRemoteTask(serverId, {
+        taskKind: remoteTaskKind,
+        payload,
+      });
+      await handleLoadRemoteTasks(serverId);
+    } catch (error) {
+      setRemoteError(error instanceof Error ? error.message : "Failed to create remote task");
+    }
+  }
+
+  async function handleCreateProxyGroup(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await runOps(() =>
+      createProxyGroup({
+        name: proxyGroupName,
+        groupKind: proxyGroupKind,
+        config: parseJSONObject(proxyGroupConfig),
+        sortOrder: proxyGroups.length + 1,
+      }),
+    );
+  }
+
+  async function handleCreateDNSProvider(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await runOps(() =>
+      createDNSProvider({
+        name: dnsProviderName,
+        providerKind: dnsProviderKind,
+        credentials: parseJSONObject(dnsCredentials),
+      }),
+    );
+  }
+
+  async function handleCreateCertificate(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await runOps(() =>
+      createCertificate({
+        name: certificateName,
+        domain: certificateDomain,
+        providerId: dnsProviders[0]?.id ?? "",
+        certPem: "",
+        keyPem: "",
+        autoRenew: true,
+        autoDeploy: true,
+        expiresAt: "",
+      }),
+    );
+  }
+
+  async function handleCreateNotification(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await runOps(() =>
+      createNotificationChannel({
+        name: notificationName,
+        channelKind: "telegram",
+        config: parseJSONObject(notificationConfig),
+        enabled: true,
+      }),
+    );
+  }
+
+  async function handleCreateBackup(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await runOps(() =>
+      createBackup({
+        backupKind: "manual",
+        filePath: backupPath,
+        summary: "Manual backup marker created from the HarborX console.",
+      }),
+    );
+  }
+
+  async function handleUpsertSetting(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await runOps(() => upsertSystemSetting(settingKey, { value: parseJSONObject(settingValue) }));
+  }
+
+  async function handleCreateTrafficSample(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await runOps(() =>
+      createTrafficSample({
+        sampleScope: trafficScope,
+        scopeId: trafficScopeID,
+        rxBytes: Number(trafficRX),
+        txBytes: Number(trafficTX),
+        rate: {},
+      }),
+    );
+  }
+
+  async function runOps(action: () => Promise<unknown>) {
+    setOpsError(null);
+    try {
+      await action();
+    } catch (error) {
+      setOpsError(error instanceof Error ? error.message : "Operation failed");
     }
   }
 
@@ -672,6 +873,274 @@ export function App() {
           </article>
         </section>
 
+        <section className="remote-layout">
+          <article className="panel">
+            <div className="panel-head">
+              <div>
+                <p className="eyebrow">Remote Servers</p>
+                <h3>Register VPS and queue operations</h3>
+              </div>
+            </div>
+
+            <form className="stack-form" onSubmit={(event) => void handleCreateRemoteServer(event)}>
+              <input
+                placeholder="Server name"
+                value={remoteName}
+                onChange={(event) => setRemoteName(event.target.value)}
+              />
+              <input
+                placeholder="Host or public IP"
+                value={remoteHost}
+                onChange={(event) => setRemoteHost(event.target.value)}
+              />
+              <div className="inline-form">
+                <select value={remoteConnectionMode} onChange={(event) => setRemoteConnectionMode(event.target.value)}>
+                  {["pull", "websocket", "http"].map((value) => (
+                    <option key={value} value={value}>
+                      {value}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  placeholder="tags"
+                  value={remoteTags}
+                  onChange={(event) => setRemoteTags(event.target.value)}
+                />
+              </div>
+              <button type="submit">Register server</button>
+            </form>
+
+            {remoteEnrollment ? (
+              <div className="token-box">
+                <div className="entity-head">
+                  <strong>Enrollment tokens for {remoteEnrollment.server.name}</strong>
+                  <span>show once</span>
+                </div>
+                <code>server: {remoteEnrollment.serverToken}</code>
+                <code>agent: {remoteEnrollment.agentToken}</code>
+              </div>
+            ) : null}
+
+            {remoteError ? <p className="status error">{remoteError}</p> : null}
+          </article>
+
+          <article className="panel">
+            <div className="panel-head">
+              <div>
+                <p className="eyebrow">Task Queue</p>
+                <h3>Choose an operation payload</h3>
+              </div>
+            </div>
+            <div className="stack-form">
+              <select value={remoteTaskKind} onChange={(event) => setRemoteTaskKind(event.target.value)}>
+                {[
+                  "reload-config",
+                  "restart-xray",
+                  "install-xray",
+                  "install-nginx",
+                  "renew-certificate",
+                  "install-warp",
+                  "shell-script",
+                ].map((value) => (
+                  <option key={value} value={value}>
+                    {value}
+                  </option>
+                ))}
+              </select>
+              <textarea value={remoteTaskPayload} onChange={(event) => setRemoteTaskPayload(event.target.value)} />
+              <p>Payload is JSON and will be stored with the queued task for the agent executor.</p>
+            </div>
+          </article>
+
+          <article className="panel remote-list-panel">
+            <div className="entity-list">
+              {remoteServers.map((server) => (
+                <div className="entity-card" key={server.id}>
+                  <div className="entity-head">
+                    <strong>{server.name}</strong>
+                    <span>{server.status}</span>
+                  </div>
+                  <p>
+                    {server.host} via {server.connectionMode}
+                  </p>
+                  <div className="chip-row">
+                    {Array.isArray(server.metadata.tags)
+                      ? server.metadata.tags.map((tag) => (
+                          <span className="chip" key={String(tag)}>
+                            {String(tag)}
+                          </span>
+                        ))
+                      : null}
+                  </div>
+                  <div className="action-row">
+                    <button type="button" className="ghost-button" onClick={() => void handleSetRemoteStatus(server.id, "online")}>
+                      Mark online
+                    </button>
+                    <button type="button" className="ghost-button" onClick={() => void handleSetRemoteStatus(server.id, "maintenance")}>
+                      Maintenance
+                    </button>
+                    <button type="button" className="ghost-button" onClick={() => void handleCreateRemoteTask(server.id)}>
+                      Queue task
+                    </button>
+                    <button type="button" className="ghost-button" onClick={() => void handleLoadRemoteTasks(server.id)}>
+                      Load tasks
+                    </button>
+                    <button type="button" className="ghost-button" onClick={() => void deleteRemoteServer(server.id)}>
+                      Delete
+                    </button>
+                  </div>
+
+                  {remoteTasks[server.id]?.length ? (
+                    <div className="task-list">
+                      {remoteTasks[server.id].map((task) => (
+                        <div className="rule-row" key={task.id}>
+                          <span>{task.status}</span>
+                          <code>{task.taskKind}</code>
+                          <small>{task.createdAt}</small>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          </article>
+        </section>
+
+        <section className="operations-grid">
+          <article className="panel">
+            <p className="eyebrow">Proxy Groups</p>
+            <h3>Policy groups</h3>
+            <form className="stack-form" onSubmit={(event) => void handleCreateProxyGroup(event)}>
+              <input value={proxyGroupName} onChange={(event) => setProxyGroupName(event.target.value)} />
+              <select value={proxyGroupKind} onChange={(event) => setProxyGroupKind(event.target.value)}>
+                {["select", "url-test", "fallback", "load-balance", "relay"].map((value) => (
+                  <option key={value} value={value}>
+                    {value}
+                  </option>
+                ))}
+              </select>
+              <textarea value={proxyGroupConfig} onChange={(event) => setProxyGroupConfig(event.target.value)} />
+              <button type="submit">Create group</button>
+            </form>
+            <MiniList
+              items={proxyGroups.map((item) => ({ id: item.id, title: item.name, subtitle: item.groupKind }))}
+              onDelete={(id) => void runOps(() => deleteProxyGroup(id))}
+            />
+          </article>
+
+          <article className="panel">
+            <p className="eyebrow">DNS</p>
+            <h3>Provider accounts</h3>
+            <form className="stack-form" onSubmit={(event) => void handleCreateDNSProvider(event)}>
+              <input value={dnsProviderName} onChange={(event) => setDNSProviderName(event.target.value)} />
+              <select value={dnsProviderKind} onChange={(event) => setDNSProviderKind(event.target.value)}>
+                {["cloudflare", "alidns", "dnspod", "tencent", "godaddy", "namesilo"].map((value) => (
+                  <option key={value} value={value}>
+                    {value}
+                  </option>
+                ))}
+              </select>
+              <textarea value={dnsCredentials} onChange={(event) => setDNSCredentials(event.target.value)} />
+              <button type="submit">Save provider</button>
+            </form>
+            <MiniList
+              items={dnsProviders.map((item) => ({ id: item.id, title: item.name, subtitle: item.providerKind }))}
+              onDelete={(id) => void runOps(() => deleteDNSProvider(id))}
+            />
+          </article>
+
+          <article className="panel">
+            <p className="eyebrow">Certificates</p>
+            <h3>ACME inventory</h3>
+            <form className="stack-form" onSubmit={(event) => void handleCreateCertificate(event)}>
+              <input value={certificateName} onChange={(event) => setCertificateName(event.target.value)} />
+              <input value={certificateDomain} onChange={(event) => setCertificateDomain(event.target.value)} />
+              <button type="submit">Create certificate record</button>
+            </form>
+            <MiniList
+              items={certificates.map((item) => ({ id: item.id, title: item.name, subtitle: item.domain }))}
+              onDelete={(id) => void runOps(() => deleteCertificate(id))}
+            />
+          </article>
+
+          <article className="panel">
+            <p className="eyebrow">Notifications</p>
+            <h3>Alert channels</h3>
+            <form className="stack-form" onSubmit={(event) => void handleCreateNotification(event)}>
+              <input value={notificationName} onChange={(event) => setNotificationName(event.target.value)} />
+              <textarea value={notificationConfig} onChange={(event) => setNotificationConfig(event.target.value)} />
+              <button type="submit">Create channel</button>
+            </form>
+            <MiniList
+              items={notificationChannels.map((item) => ({
+                id: item.id,
+                title: item.name,
+                subtitle: `${item.channelKind} ${item.enabled ? "enabled" : "disabled"}`,
+              }))}
+              onDelete={(id) => void runOps(() => deleteNotificationChannel(id))}
+            />
+          </article>
+
+          <article className="panel">
+            <p className="eyebrow">Backups</p>
+            <h3>Backup ledger</h3>
+            <form className="stack-form" onSubmit={(event) => void handleCreateBackup(event)}>
+              <input value={backupPath} onChange={(event) => setBackupPath(event.target.value)} />
+              <button type="submit">Record backup</button>
+            </form>
+            <MiniList
+              items={backups.map((item) => ({ id: item.id, title: item.backupKind, subtitle: item.filePath }))}
+              onDelete={(id) => void runOps(() => deleteBackup(id))}
+            />
+          </article>
+
+          <article className="panel">
+            <p className="eyebrow">System</p>
+            <h3>Runtime settings</h3>
+            <form className="stack-form" onSubmit={(event) => void handleUpsertSetting(event)}>
+              <input value={settingKey} onChange={(event) => setSettingKey(event.target.value)} />
+              <textarea value={settingValue} onChange={(event) => setSettingValue(event.target.value)} />
+              <button type="submit">Save setting</button>
+            </form>
+            <MiniList
+              items={systemSettings.map((item) => ({ id: item.key, title: item.key, subtitle: JSON.stringify(item.value) }))}
+              onDelete={(id) => void runOps(() => deleteSystemSetting(id))}
+            />
+          </article>
+
+          <article className="panel">
+            <p className="eyebrow">Traffic</p>
+            <h3>Usage samples</h3>
+            <form className="stack-form" onSubmit={(event) => void handleCreateTrafficSample(event)}>
+              <div className="inline-form">
+                <select value={trafficScope} onChange={(event) => setTrafficScope(event.target.value)}>
+                  {["server", "node", "user"].map((value) => (
+                    <option key={value} value={value}>
+                      {value}
+                    </option>
+                  ))}
+                </select>
+                <input value={trafficScopeID} onChange={(event) => setTrafficScopeID(event.target.value)} />
+              </div>
+              <div className="inline-form">
+                <input value={trafficRX} onChange={(event) => setTrafficRX(event.target.value)} placeholder="rx bytes" />
+                <input value={trafficTX} onChange={(event) => setTrafficTX(event.target.value)} placeholder="tx bytes" />
+              </div>
+              <button type="submit">Record sample</button>
+            </form>
+            <MiniList
+              items={trafficSamples.map((item) => ({
+                id: item.id,
+                title: `${item.sampleScope}:${item.scopeId}`,
+                subtitle: `rx ${item.rxBytes} / tx ${item.txBytes}`,
+              }))}
+            />
+          </article>
+
+          {opsError ? <p className="status error ops-error">{opsError}</p> : null}
+        </section>
+
         <section className="panel">
           <div className="panel-head">
             <div>
@@ -698,9 +1167,46 @@ export function App() {
   );
 }
 
+function MiniList({
+  items,
+  onDelete,
+}: {
+  items: Array<{ id: string; title: string; subtitle: string }>;
+  onDelete?: (id: string) => void;
+}) {
+  if (items.length === 0) {
+    return <p className="status mini-empty">No records yet.</p>;
+  }
+  return (
+    <div className="mini-list">
+      {items.map((item) => (
+        <div className="mini-row" key={item.id}>
+          <div>
+            <strong>{item.title}</strong>
+            <span>{item.subtitle}</span>
+          </div>
+          {onDelete ? (
+            <button type="button" className="ghost-button" onClick={() => onDelete(item.id)}>
+              Delete
+            </button>
+          ) : null}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function splitCSV(input: string) {
   return input
     .split(",")
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+function parseJSONObject(input: string): Record<string, unknown> {
+  const parsed = JSON.parse(input) as unknown;
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("Payload must be a JSON object");
+  }
+  return parsed as Record<string, unknown>;
 }
