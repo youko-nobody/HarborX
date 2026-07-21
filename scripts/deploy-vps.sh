@@ -6,6 +6,7 @@ INSTALL_DIR="${HARBORX_INSTALL_DIR:-/opt/harborx}"
 PORT="${HARBORX_PORT:-18080}"
 HOST="${HARBORX_HOST:-0.0.0.0}"
 ADMIN_PASSWORD="${HARBORX_ADMIN_PASSWORD:-}"
+SWAP_SIZE="${HARBORX_SWAP_SIZE:-2G}"
 
 need_root() {
   if [ "$(id -u)" -ne 0 ]; then
@@ -34,6 +35,36 @@ install_docker() {
   fi
   curl -fsSL https://get.docker.com | sh
   systemctl enable --now docker
+}
+
+ensure_swap() {
+  if [ "$SWAP_SIZE" = "0" ] || [ "$SWAP_SIZE" = "false" ]; then
+    return
+  fi
+
+  if swapon --show=NAME --noheadings | grep -qx "/swapfile"; then
+    return
+  fi
+
+  if [ -f /swapfile ]; then
+    chmod 600 /swapfile
+  else
+    if command -v fallocate >/dev/null 2>&1; then
+      fallocate -l "$SWAP_SIZE" /swapfile || dd if=/dev/zero of=/swapfile bs=1M count=2048
+    else
+      dd if=/dev/zero of=/swapfile bs=1M count=2048
+    fi
+    chmod 600 /swapfile
+    mkswap /swapfile
+  fi
+
+  if ! swapon /swapfile; then
+    mkswap /swapfile
+    swapon /swapfile
+  fi
+  if ! grep -qE '^[^#]*/swapfile[[:space:]]+none[[:space:]]+swap' /etc/fstab; then
+    echo '/swapfile none swap sw 0 0' >> /etc/fstab
+  fi
 }
 
 sync_repo() {
@@ -69,6 +100,7 @@ start_stack() {
 need_root
 install_packages
 install_docker
+ensure_swap
 sync_repo
 write_env
 start_stack

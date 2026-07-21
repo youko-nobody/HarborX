@@ -1,13 +1,14 @@
 FROM golang:1.25-alpine AS backend-build
 
 WORKDIR /app
+ENV GOMAXPROCS=1
 COPY go.mod ./
 COPY go.sum ./
 COPY cmd ./cmd
 COPY internal ./internal
 
-RUN go build -o /out/harborx ./cmd/server
-RUN go build -o /out/harborx-agent ./cmd/agent
+RUN go build -p=1 -o /out/harborx ./cmd/server
+RUN go build -p=1 -o /out/harborx-agent ./cmd/agent
 
 FROM node:22-alpine AS frontend-build
 
