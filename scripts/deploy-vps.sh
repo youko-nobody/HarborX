@@ -77,6 +77,10 @@ sync_repo() {
 }
 
 write_env() {
+  if [ -z "$ADMIN_PASSWORD" ] && [ -f "$INSTALL_DIR/.env" ]; then
+    ADMIN_PASSWORD="$(grep -E '^HARBORX_ADMIN_PASSWORD=' "$INSTALL_DIR/.env" | tail -n 1 | cut -d= -f2- || true)"
+  fi
+
   if [ -z "$ADMIN_PASSWORD" ]; then
     ADMIN_PASSWORD="harborx-$(openssl rand -base64 18 | tr -d '=+/')"
   fi
