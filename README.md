@@ -1,6 +1,6 @@
 # HarborX
 
-`HarborX` is a self-hosted control panel inspired by `miaomiaowuX`, rebuilt for personal use without any `license`, `pro`, or feature-gating modules.
+`HarborX` is a self-hosted control panel for personal Xray, subscription, and VPS operations, rebuilt without any `license`, `pro`, or feature-gating modules.
 
 ## Goals
 

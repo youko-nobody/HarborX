@@ -6,7 +6,7 @@ services:
     container_name: harborx
     restart: unless-stopped
     ports:
-      - "18080:18080"
+      - "${HARBORX_PORT:-18080}:18080"
     env_file:
       - .env
     environment:

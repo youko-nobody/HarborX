@@ -1,20 +1,20 @@
 import { useState, type FormEvent, type ReactNode } from "react";
 import {
   listAgentLogs,
-  listRemoteTasks,
   listRemoteTaskLogs,
+  listRemoteTasks,
   previewSubscription,
   previewXray,
   getAuthToken,
   login,
   setAuthToken,
   subscriptionDownloadURL,
-  type AuthUser,
-  type AgentLogRecord,
-  type RemoteServerEnrollment,
-  type RemoteTaskRecord,
-  type RemoteTaskLogRecord,
   validateRuleSet,
+  type AgentLogRecord,
+  type AuthUser,
+  type RemoteServerEnrollment,
+  type RemoteTaskLogRecord,
+  type RemoteTaskRecord,
   type RenderedSubscription,
   type RuleRecord,
   type RuleSetInput,
@@ -57,6 +57,31 @@ const opsDefaultConfig: Record<string, string> = {
 };
 
 type DraftRule = Omit<RuleRecord, "id"> & { id: string };
+
+type ConsoleSection =
+  | "dashboard"
+  | "nodes"
+  | "subscriptions"
+  | "rules"
+  | "templates"
+  | "users"
+  | "traffic"
+  | "remote"
+  | "xray"
+  | "system";
+
+const consoleNavItems: Array<{ key: ConsoleSection; label: string; helper: string }> = [
+  { key: "dashboard", label: "总览", helper: "状态、模块与快捷入口" },
+  { key: "nodes", label: "节点", helper: "录入、导入与开关管理" },
+  { key: "subscriptions", label: "订阅", helper: "生成、下载与套餐绑定" },
+  { key: "rules", label: "规则", helper: "Clash 可视化规则编辑" },
+  { key: "templates", label: "模板", helper: "内置模板和私有模板库" },
+  { key: "users", label: "用户", helper: "成员账号与会话权限" },
+  { key: "traffic", label: "流量", helper: "采样记录与汇总视图" },
+  { key: "remote", label: "远程", helper: "VPS 纳管、任务与日志" },
+  { key: "xray", label: "Xray", helper: "预览、快照与运行模式" },
+  { key: "system", label: "系统", helper: "证书、通知、备份与自动化" },
+];
 
 const emptyDraftRule = (): DraftRule => ({
   id: createClientId(),
@@ -120,6 +145,7 @@ export function App() {
     updateUser,
     deleteUser,
   } = useWorkspaceData();
+
   const modules = data?.modules ?? [];
   const starterRules = data?.rules.defaultRules ?? [];
   const policyOptions = data?.rules.policies ?? [];
@@ -234,8 +260,10 @@ export function App() {
   const [newUserDisplayName, setNewUserDisplayName] = useState("Member");
   const [newUserEmail, setNewUserEmail] = useState("");
   const [userError, setUserError] = useState<string | null>(null);
+  const [activeSection, setActiveSection] = useState<ConsoleSection>("dashboard");
 
   const isAuthenticated = Boolean(getAuthToken());
+  const activeNavItem = consoleNavItems.find((item) => item.key === activeSection) ?? consoleNavItems[0];
 
   async function handleLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -246,8 +274,8 @@ export function App() {
       setAuthUser(response.user);
       setAuthPassword("");
       await refresh();
-    } catch (error) {
-      setAuthError(error instanceof Error ? error.message : "Login failed");
+    } catch (loginError) {
+      setAuthError(loginError instanceof Error ? loginError.message : "Login failed");
     }
   }
 
@@ -284,10 +312,10 @@ export function App() {
         sourceKind: "share-link-import",
         tags: splitCSV(nodeTags),
       });
-      setNodeImportStatus(`Imported ${result.created.length} nodes, skipped ${result.skipped.length}.`);
+      setNodeImportStatus(`已导入 ${result.created.length} 个节点，跳过 ${result.skipped.length} 条。`);
       setNodeImportContent("");
-    } catch (error) {
-      setNodeImportStatus(error instanceof Error ? error.message : "Node import failed");
+    } catch (importError) {
+      setNodeImportStatus(importError instanceof Error ? importError.message : "Node import failed");
     }
   }
 
@@ -337,11 +365,10 @@ export function App() {
     setRuleSetName(item.name);
     setRuleSetDescription(item.description);
     setDraftRules(
-      item.rules.length
-        ? item.rules.map((rule) => ({ ...rule, id: rule.id || createClientId() }))
-        : [emptyDraftRule()],
+      item.rules.length ? item.rules.map((rule) => ({ ...rule, id: rule.id || createClientId() })) : [emptyDraftRule()],
     );
     setRuleValidation(null);
+    setActiveSection("rules");
   }
 
   function updateDraftRule(id: string, patch: Partial<DraftRule>) {
@@ -424,8 +451,8 @@ export function App() {
     setPreviewError(null);
     try {
       setRenderedSubscription(await previewSubscription(id));
-    } catch (error) {
-      setPreviewError(error instanceof Error ? error.message : "Failed to render subscription");
+    } catch (previewSubscriptionError) {
+      setPreviewError(previewSubscriptionError instanceof Error ? previewSubscriptionError.message : "Failed to render subscription");
     }
   }
 
@@ -433,8 +460,8 @@ export function App() {
     setXrayError(null);
     try {
       setXrayPreview(await previewXray());
-    } catch (error) {
-      setXrayError(error instanceof Error ? error.message : "Failed to preview Xray config");
+    } catch (previewXrayError) {
+      setXrayError(previewXrayError instanceof Error ? previewXrayError.message : "Failed to preview Xray config");
     }
   }
 
@@ -443,8 +470,8 @@ export function App() {
     try {
       await saveXraySnapshot({ targetKind: "local", targetId: "default" });
       await refresh();
-    } catch (error) {
-      setXrayError(error instanceof Error ? error.message : "Failed to save Xray snapshot");
+    } catch (snapshotError) {
+      setXrayError(snapshotError instanceof Error ? snapshotError.message : "Failed to save Xray snapshot");
     }
   }
 
@@ -453,8 +480,8 @@ export function App() {
     try {
       const snapshot = await restoreXraySnapshot(id);
       setRestoredSnapshot(snapshot.config);
-    } catch (error) {
-      setXrayError(error instanceof Error ? error.message : "Failed to restore Xray snapshot");
+    } catch (restoreError) {
+      setXrayError(restoreError instanceof Error ? restoreError.message : "Failed to restore Xray snapshot");
     }
   }
 
@@ -472,8 +499,8 @@ export function App() {
         metadata: {},
         enabled: true,
       });
-    } catch (error) {
-      setXrayError(error instanceof Error ? error.message : "Failed to create Xray profile");
+    } catch (createProfileError) {
+      setXrayError(createProfileError instanceof Error ? createProfileError.message : "Failed to create Xray profile");
     }
   }
 
@@ -486,14 +513,10 @@ export function App() {
         targetKind: "profile",
         targetId: id,
       });
-      setXrayApplyStatus(
-        dryRun
-          ? `Dry-run rendered ${result.summary}.`
-          : `Queued ${result.runtimeMode} Xray apply task ${result.taskId}.`,
-      );
+      setXrayApplyStatus(dryRun ? `Dry-run rendered ${result.summary}.` : `Queued ${result.runtimeMode} Xray apply task ${result.taskId}.`);
       setXrayPreview({ content: result.config, summary: result.summary });
-    } catch (error) {
-      setXrayError(error instanceof Error ? error.message : "Failed to apply Xray profile");
+    } catch (applyError) {
+      setXrayError(applyError instanceof Error ? applyError.message : "Failed to apply Xray profile");
     }
   }
 
@@ -511,8 +534,8 @@ export function App() {
       setRemoteName("");
       setRemoteHost("");
       setRemoteTags("");
-    } catch (error) {
-      setRemoteError(error instanceof Error ? error.message : "Failed to create remote server");
+    } catch (createRemoteError) {
+      setRemoteError(createRemoteError instanceof Error ? createRemoteError.message : "Failed to create remote server");
     }
   }
 
@@ -535,24 +558,18 @@ export function App() {
     try {
       const items = await listRemoteTasks(serverId);
       setRemoteTasks((current) => ({ ...current, [serverId]: items }));
-    } catch (error) {
-      setRemoteError(error instanceof Error ? error.message : "Failed to load remote tasks");
+    } catch (tasksError) {
+      setRemoteError(tasksError instanceof Error ? tasksError.message : "Failed to load remote tasks");
     }
   }
 
   async function handleLoadRemoteLogs(serverId: string) {
     setRemoteError(null);
     try {
-      const [agentLogs, taskLogs] = await Promise.all([
-        listAgentLogs(serverId),
-        remoteTasks[serverId]?.[0]?.id ? listRemoteTaskLogs(serverId, remoteTasks[serverId][0].id) : Promise.resolve([]),
-      ]);
+      const agentLogs = await listAgentLogs(serverId);
       setRemoteAgentLogs((current) => ({ ...current, [serverId]: agentLogs }));
-      if (remoteTasks[serverId]?.[0]?.id) {
-        setRemoteTaskLogs((current) => ({ ...current, [serverId]: taskLogs }));
-      }
-    } catch (error) {
-      setRemoteError(error instanceof Error ? error.message : "Failed to load remote logs");
+    } catch (logsError) {
+      setRemoteError(logsError instanceof Error ? logsError.message : "Failed to load remote logs");
     }
   }
 
@@ -561,8 +578,8 @@ export function App() {
     try {
       const items = await listRemoteTaskLogs(serverId, taskId);
       setRemoteTaskLogs((current) => ({ ...current, [`${serverId}:${taskId}`]: items }));
-    } catch (error) {
-      setRemoteError(error instanceof Error ? error.message : "Failed to load remote task logs");
+    } catch (taskLogsError) {
+      setRemoteError(taskLogsError instanceof Error ? taskLogsError.message : "Failed to load remote task logs");
     }
   }
 
@@ -575,8 +592,8 @@ export function App() {
         payload,
       });
       await handleLoadRemoteTasks(serverId);
-    } catch (error) {
-      setRemoteError(error instanceof Error ? error.message : "Failed to create remote task");
+    } catch (createTaskError) {
+      setRemoteError(createTaskError instanceof Error ? createTaskError.message : "Failed to create remote task");
     }
   }
 
@@ -696,8 +713,8 @@ export function App() {
     setOpsStatus(null);
     try {
       await action();
-    } catch (error) {
-      setOpsError(error instanceof Error ? error.message : "Operation failed");
+    } catch (operationError) {
+      setOpsError(operationError instanceof Error ? operationError.message : "Operation failed");
     }
   }
 
@@ -716,8 +733,8 @@ export function App() {
       setNewUserPassword("");
       setNewUserDisplayName("Member");
       setNewUserEmail("");
-    } catch (error) {
-      setUserError(error instanceof Error ? error.message : "Failed to create user");
+    } catch (createUserError) {
+      setUserError(createUserError instanceof Error ? createUserError.message : "Failed to create user");
     }
   }
 
@@ -735,200 +752,219 @@ export function App() {
         email: item.email,
         password: "",
       });
-    } catch (error) {
-      setUserError(error instanceof Error ? error.message : "Failed to update user");
+    } catch (toggleUserError) {
+      setUserError(toggleUserError instanceof Error ? toggleUserError.message : "Failed to update user");
     }
   }
 
-  return (
-    <div className="shell">
-      <aside className="sidebar">
-        <div className="brand-block">
-          <div className="brand-mark">HX</div>
-          <p className="eyebrow">HarborX</p>
-          <h1>节点、订阅与 Xray 运维控制台</h1>
-          <p className="lede">自用优先的全功能面板，没有授权中心，没有 Pro 限制。</p>
-        </div>
+  const totalTrafficBytes = trafficRollups.reduce((sum, item) => sum + item.rxBytes + item.txBytes, 0);
+  const enabledNodes = nodes.filter((item) => item.enabled).length;
+  const onlineRemoteServers = remoteServers.filter((item) => item.status === "online").length;
+  const activeUsers = users.filter((item) => item.status === "active").length;
+  const latestBackup = backups[0]?.filePath ?? "暂无备份";
+  const latestSnapshot = xraySnapshots[0]?.createdAt ?? "暂无快照";
+  const taskQueueCount = Object.values(remoteTasks).reduce((sum, items) => sum + items.length, 0);
 
-        <nav className="nav">
-          {[
-            "总览",
-            "节点管理",
-            "订阅生成",
-            "Clash 规则",
-            "模板仓库",
-            "VPS 远程",
-            "Xray 配置",
-            "证书 DNS",
-            "通知备份",
-            "系统设置",
-          ].map((item) => (
-            <a href="/" key={item} onClick={(event) => event.preventDefault()}>
-              {item}
-            </a>
-          ))}
-        </nav>
+  const overviewMetrics = [
+    { label: "功能域", value: String(data?.dashboard.modulesTotal ?? modules.length), detail: "当前控制台覆盖模块" },
+    { label: "节点库存", value: String(nodes.length), detail: `${enabledNodes} 个启用中` },
+    { label: "远程主机", value: String(remoteServers.length), detail: `${onlineRemoteServers} 台在线` },
+    { label: "流量汇总", value: formatBytes(totalTrafficBytes), detail: `${trafficRollups.length} 个汇总视图` },
+  ];
 
-        <div className="side-status">
-          <span className="signal-dot" />
-          <div>
-            <strong>{isAuthenticated ? "控制台已解锁" : "只读预览模式"}</strong>
-            <small>{data ? `${data.dashboard.modulesTotal} 个功能域在线` : "等待数据同步"}</small>
-          </div>
-        </div>
-      </aside>
+  const dashboardShortcuts: Array<{ key: ConsoleSection; title: string; detail: string; meta: string }> = [
+    { key: "nodes", title: "节点管理", detail: `${nodes.length} 个节点`, meta: "导入、启停、标签与协议" },
+    { key: "subscriptions", title: "订阅发布", detail: `${subscriptions.length} 条订阅`, meta: "预览、下载、套餐和绑定" },
+    { key: "remote", title: "远程运维", detail: `${remoteServers.length} 台 VPS`, meta: "任务队列、Agent 日志与批量执行" },
+    { key: "xray", title: "Xray 工作区", detail: `${xrayProfiles.length} 套运行配置`, meta: "预览、快照、外置与内联模式" },
+  ];
 
-      <main className="content">
-        <section className="hero">
-          <div>
-            <p className="eyebrow">Self-hosted Xray Panel</p>
-            <h2>一套面板管理节点、订阅、规则和 VPS 自动化</h2>
-            <p>保留你要的完整功能面，去掉授权和 Pro 门槛，重点放在节点生命周期、Clash 规则可视化、Xray 配置预览与远程执行。</p>
-          </div>
-          <div className="pillbox">
-            <span>无授权模块</span>
-            <span>无 Pro 限制</span>
-            <span>VPS 一键部署</span>
-            <span>{isAuthenticated ? "管理员在线" : "只读模式"}</span>
-            {data ? <span>{data.dashboard.modulesTotal} 个模块</span> : null}
-          </div>
-        </section>
-
-        <section className="panel auth-panel">
-          <div>
-            <p className="eyebrow">Access</p>
-            <h3>{isAuthenticated ? `Signed in as ${authUser?.username ?? "admin"}` : "Sign in to change data"}</h3>
-            <p>
-              Preview and download stay available, but create/update/delete actions require an admin session token.
-            </p>
-          </div>
-          {isAuthenticated ? (
-            <button type="button" className="ghost-button" onClick={handleLogout}>
-              Sign out
-            </button>
-          ) : (
-            <form className="auth-form" onSubmit={(event) => void handleLogin(event)}>
-              <input value={authUsername} onChange={(event) => setAuthUsername(event.target.value)} placeholder="username" />
-              <input
-                value={authPassword}
-                onChange={(event) => setAuthPassword(event.target.value)}
-                placeholder="password"
-                type="password"
-              />
-              <button type="submit">Sign in</button>
-              {authError ? <p className="status error">{authError}</p> : null}
-            </form>
-          )}
-        </section>
-
-        {isAuthenticated ? (
-          <section className="panel users-panel">
-            <div className="panel-head">
-              <div>
-                <p className="eyebrow">Users</p>
-                <h3>Members and operator access</h3>
-              </div>
-            </div>
-            <form className="user-form" onSubmit={(event) => void handleCreateUser(event)}>
-              <input value={newUsername} onChange={(event) => setNewUsername(event.target.value)} placeholder="username" />
-              <input
-                value={newUserPassword}
-                onChange={(event) => setNewUserPassword(event.target.value)}
-                placeholder="password"
-                type="password"
-              />
-              <input
-                value={newUserDisplayName}
-                onChange={(event) => setNewUserDisplayName(event.target.value)}
-                placeholder="display name"
-              />
-              <input value={newUserEmail} onChange={(event) => setNewUserEmail(event.target.value)} placeholder="email" />
-              <button type="submit">Create member</button>
-            </form>
-            {userError ? <p className="status error">{userError}</p> : null}
-            <div className="user-list">
-              {users.map((user) => (
-                <div className="mini-row" key={user.id}>
-                  <div>
-                    <strong>{user.displayName || user.username}</strong>
-                    <span>
-                      {user.username} / {user.role} / {user.status}
-                    </span>
-                  </div>
-                  <div className="action-row">
-                    <button type="button" className="ghost-button" onClick={() => void handleToggleUserStatus(user.id)}>
-                      {user.status === "active" ? "Disable" : "Enable"}
-                    </button>
-                    {user.id !== "local-admin" ? (
-                      <button type="button" className="ghost-button" onClick={() => void deleteUser(user.id)}>
-                        Delete
-                      </button>
-                    ) : null}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </section>
-        ) : null}
-
-        <section className="stats">
-          <article className="stat-card">
-            <strong>{data?.dashboard.modulesTotal ?? "--"}</strong>
-            <span>Feature domains</span>
-          </article>
-          <article className="stat-card">
-            <strong>{data?.dashboard.modulesInProgress ?? "--"}</strong>
-            <span>In progress now</span>
-          </article>
-          <article className="stat-card">
-            <strong>{data?.dashboard.platformMode ?? "selfhost"}</strong>
-            <span>Platform mode</span>
-          </article>
-          <article className="stat-card">
-            <strong>{data?.dashboard.gatingModel ?? "none"}</strong>
-            <span>Feature gating</span>
-          </article>
-        </section>
-
-        {loading ? <p className="status">Loading bootstrap data...</p> : null}
-        {error ? <p className="status error">Bootstrap load failed: {error}</p> : null}
-        {busy ? <p className="status">Saving changes...</p> : null}
-
-        <section className="grid">
-          {modules.map((module) => (
-            <article className="card" key={module.key}>
-              <div className="card-head">
-                <strong>{module.name}</strong>
-                <span>{module.status}</span>
-              </div>
-              <p>{module.description}</p>
-              <ul>
-                {module.capabilities.map((capability) => (
-                  <li key={capability}>{capability}</li>
-                ))}
-              </ul>
+  function renderDashboardSection() {
+    return (
+      <>
+        <section className="overview-grid">
+          {overviewMetrics.map((metric) => (
+            <article className="metric-card" key={metric.label}>
+              <span className="metric-label">{metric.label}</span>
+              <strong>{metric.value}</strong>
+              <p>{metric.detail}</p>
             </article>
           ))}
         </section>
 
-        <section className="studio">
-          <div className="panel">
-            <div className="panel-head">
-              <div>
-                <p className="eyebrow">Rules Studio</p>
-                <h3>Rule sets with live persistence</h3>
-              </div>
+        <section className="page-grid dashboard-grid">
+          <article className="section-panel span-2">
+            <SectionHeader
+              kicker="模块状态"
+              title="当前功能覆盖与能力清单"
+              note="优先把高频运维信息做成密集而可扫描的控制台，不再使用大横幅首页。"
+            />
+            <div className="module-grid">
+              {modules.length ? (
+                modules.map((module) => (
+                  <article className="module-card" key={module.key}>
+                    <div className="entity-head">
+                      <strong>{module.name}</strong>
+                      <span>{module.status}</span>
+                    </div>
+                    <p>{module.description}</p>
+                    <ul>
+                      {module.capabilities.map((capability) => (
+                        <li key={capability}>{capability}</li>
+                      ))}
+                    </ul>
+                  </article>
+                ))
+              ) : (
+                <EmptyState title="模块数据还没返回" note="工作区加载完成后，这里会展示后端暴露的功能域和能力清单。" />
+              )}
             </div>
+          </article>
 
-            <div className="rule-list">
-              {ruleSets.length > 0 ? (
-                ruleSets.map((item) => (
+          <article className="section-panel">
+            <SectionHeader kicker="快速入口" title="常用工作流" />
+            <div className="quick-nav-grid">
+              {dashboardShortcuts.map((item) => (
+                <button type="button" className="quick-nav-card" key={item.key} onClick={() => setActiveSection(item.key)}>
+                  <strong>{item.title}</strong>
+                  <span>{item.detail}</span>
+                  <small>{item.meta}</small>
+                </button>
+              ))}
+            </div>
+          </article>
+
+          <article className="section-panel">
+            <SectionHeader kicker="运行观察" title="核心运行信号" />
+            <div className="status-list">
+              <StatusLine label="平台模式" value={data?.dashboard.platformMode ?? "selfhost"} />
+              <StatusLine label="功能门禁" value={data?.dashboard.gatingModel ?? "local-auth"} />
+              <StatusLine label="最近备份" value={latestBackup} />
+              <StatusLine label="最近快照" value={latestSnapshot} />
+              <StatusLine label="通知通道" value={`${notificationChannels.length} 个`} />
+              <StatusLine label="缓存任务" value={`${taskQueueCount} 条`} />
+            </div>
+          </article>
+
+          <article className="section-panel">
+            <SectionHeader kicker="业务摘要" title="模板、订阅与账号" />
+            <MiniList
+              items={[
+                { id: "templates", title: `模板 ${templates.length} 个`, subtitle: "内置模板和私有模板统一维护" },
+                { id: "subscriptions", title: `订阅 ${subscriptions.length} 条`, subtitle: "多客户端格式生成与下载" },
+                { id: "packages", title: `套餐 ${packages.length} 个`, subtitle: `${entitlements.length} 条用户绑定记录` },
+                { id: "users", title: `用户 ${users.length} 人`, subtitle: `${activeUsers} 人处于活跃状态` },
+              ]}
+            />
+          </article>
+        </section>
+      </>
+    );
+  }
+
+  function renderNodesSection() {
+    return (
+      <section className="page-grid two-column">
+        <article className="section-panel">
+          <SectionHeader kicker="节点录入" title="新增节点与批量导入" note="同一页完成手动录入和分享链接导入，适合快速整理节点库存。" />
+          <div className="form-grid">
+            <form className="stack-form" onSubmit={(event) => void handleCreateNode(event)}>
+              <input placeholder="节点名称" value={nodeName} onChange={(event) => setNodeName(event.target.value)} />
+              <input placeholder="服务器地址" value={nodeHost} onChange={(event) => setNodeHost(event.target.value)} />
+              <div className="inline-form">
+                <select value={nodeProtocol} onChange={(event) => setNodeProtocol(event.target.value)}>
+                  {["vmess", "vless", "trojan", "shadowsocks", "hysteria2", "tuic", "snell", "socks5"].map((value) => (
+                    <option key={value} value={value}>
+                      {value}
+                    </option>
+                  ))}
+                </select>
+                <input value={nodePort} onChange={(event) => setNodePort(event.target.value)} placeholder="端口" />
+              </div>
+              <input placeholder="标签，逗号分隔" value={nodeTags} onChange={(event) => setNodeTags(event.target.value)} />
+              <button type="submit">创建节点</button>
+            </form>
+
+            <form className="stack-form" onSubmit={(event) => void handleImportNodes(event)}>
+              <textarea
+                placeholder="每行一条链接，支持 vmess://、vless://、trojan://、ss://"
+                value={nodeImportContent}
+                onChange={(event) => setNodeImportContent(event.target.value)}
+              />
+              <button type="submit">导入分享链接</button>
+              {nodeImportStatus ? <p className="status">{nodeImportStatus}</p> : null}
+            </form>
+          </div>
+        </article>
+
+        <article className="section-panel">
+          <SectionHeader kicker="节点列表" title="库存与开关" />
+          <div className="entity-list">
+            {nodes.length ? (
+              nodes.map((item) => (
+                <div className="entity-card" key={item.id}>
+                  <div className="entity-head">
+                    <strong>{item.name}</strong>
+                    <span>{item.enabled ? "启用中" : "已停用"}</span>
+                  </div>
+                  <p>
+                    {item.protocol} · {item.serverHost}:{item.serverPort}
+                  </p>
+                  <div className="chip-row">
+                    {item.tags.map((tag) => (
+                      <span className="chip" key={tag}>
+                        {tag}
+                      </span>
+                    ))}
+                  </div>
+                  <div className="action-row">
+                    <button
+                      type="button"
+                      className="ghost-button"
+                      onClick={() =>
+                        void updateNode(item.id, {
+                          name: item.name,
+                          sourceKind: item.sourceKind,
+                          protocol: item.protocol,
+                          serverHost: item.serverHost,
+                          serverPort: item.serverPort,
+                          tags: item.tags,
+                          metadata: item.metadata,
+                          enabled: !item.enabled,
+                        })
+                      }
+                    >
+                      {item.enabled ? "停用" : "启用"}
+                    </button>
+                  <button type="button" className="ghost-button danger-button" onClick={() => void deleteNode(item.id)}>
+                    删除
+                  </button>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <EmptyState title="还没有节点" note="先手动创建一个节点，或把分享链接粘贴到左侧导入框。" />
+            )}
+          </div>
+        </article>
+      </section>
+    );
+  }
+
+  function renderRulesSection() {
+    return (
+      <section className="page-grid two-column">
+        <article className="section-panel">
+          <SectionHeader kicker="规则仓库" title="已保存规则集" note="保留默认规则预置，也支持把自定义规则集持久化归档。" />
+          <div className="rule-list">
+            {ruleSets.length > 0
+              ? ruleSets.map((item) => (
                   <div className="entity-card" key={item.id}>
                     <div className="entity-head">
                       <strong>{item.name}</strong>
                       <span>{item.scope}</span>
                     </div>
-                    <p>{item.description || "No description yet."}</p>
+                    <p>{item.description || "暂无说明"}</p>
                     <div className="rule-list compact">
                       {item.rules.map((rule) => (
                         <div className="rule-row" key={rule.id}>
@@ -943,282 +979,186 @@ export function App() {
                     </div>
                     <div className="action-row">
                       <button type="button" className="ghost-button" onClick={() => editRuleSet(item)}>
-                        Edit
+                        编辑
                       </button>
-                      <button type="button" className="ghost-button" onClick={() => void deleteRuleSet(item.id)}>
-                        Delete
+                      <button type="button" className="ghost-button danger-button" onClick={() => void deleteRuleSet(item.id)}>
+                        删除
                       </button>
                     </div>
                   </div>
                 ))
-              ) : (
-                starterRules.map((rule, index) => (
+              : starterRules.map((rule, index) => (
                   <div className="rule-row" key={rule}>
                     <span>{String(index + 1).padStart(2, "0")}</span>
                     <code>{rule}</code>
                   </div>
-                ))
-              )}
-            </div>
-          </div>
-
-          <div className="panel">
-            <div className="panel-head">
-              <div>
-                <p className="eyebrow">Rule Form</p>
-                <h3>{editingRuleSetId ? "Edit saved rule set" : "Create a saved rule set"}</h3>
-              </div>
-            </div>
-
-            <form className="rule-form" onSubmit={(event) => void handleCreateRuleSet(event)}>
-              <label>
-                Rule set name
-                <input value={ruleSetName} onChange={(event) => setRuleSetName(event.target.value)} />
-              </label>
-              <label>
-                Description
-                <textarea value={ruleSetDescription} onChange={(event) => setRuleSetDescription(event.target.value)} />
-              </label>
-
-              <div className="draft-rule-list">
-                {draftRules.map((rule, index) => (
-                  <div className="draft-rule" key={rule.id}>
-                    <div className="entity-head">
-                      <strong>Rule {index + 1}</strong>
-                      <span>{rule.enabled ? "enabled" : "disabled"}</span>
-                    </div>
-                    <select value={rule.ruleType} onChange={(event) => updateDraftRule(rule.id, { ruleType: event.target.value })}>
-                      {ruleTypes.map((value) => (
-                        <option key={value.key} value={value.key}>
-                          {value.key}
-                        </option>
-                      ))}
-                    </select>
-                    <input
-                      value={rule.pattern}
-                      disabled={rule.ruleType === "MATCH"}
-                      onChange={(event) => updateDraftRule(rule.id, { pattern: event.target.value })}
-                      placeholder={ruleTypes.find((item) => item.key === rule.ruleType)?.patternHint ?? ""}
-                    />
-                    <select value={rule.policy} onChange={(event) => updateDraftRule(rule.id, { policy: event.target.value })}>
-                      {policyOptions.map((value) => (
-                        <option key={value} value={value}>
-                          {value}
-                        </option>
-                      ))}
-                    </select>
-                    <input value={rule.note} onChange={(event) => updateDraftRule(rule.id, { note: event.target.value })} placeholder="note" />
-                    <label className="check-row">
-                      <input
-                        type="checkbox"
-                        checked={rule.enabled}
-                        onChange={(event) => updateDraftRule(rule.id, { enabled: event.target.checked })}
-                      />
-                      Enabled
-                    </label>
-                    <div className="action-row">
-                      <button type="button" className="ghost-button" onClick={() => moveDraftRule(rule.id, -1)}>
-                        Up
-                      </button>
-                      <button type="button" className="ghost-button" onClick={() => moveDraftRule(rule.id, 1)}>
-                        Down
-                      </button>
-                      <button type="button" className="ghost-button" onClick={() => removeDraftRule(rule.id)}>
-                        Remove
-                      </button>
-                    </div>
-                  </div>
                 ))}
-              </div>
-
-              {ruleValidation ? <pre className="validation-box">{ruleValidation}</pre> : null}
-
-              <div className="action-row">
-                <button type="button" onClick={() => setDraftRules((current) => [...current, { ...emptyDraftRule(), sortOrder: current.length + 1 }])}>
-                  Add rule
-                </button>
-                <button type="submit">{editingRuleSetId ? "Update rule set" : "Save rule set"}</button>
-                {editingRuleSetId ? (
-                  <button type="button" className="ghost-button" onClick={resetRuleEditor}>
-                    Cancel edit
-                  </button>
-                ) : null}
-              </div>
-            </form>
           </div>
-        </section>
+        </article>
 
-        <section className="workspace-grid">
-          <article className="panel">
-            <div className="panel-head">
-              <div>
-                <p className="eyebrow">Nodes</p>
-                <h3>Add and inspect nodes</h3>
-              </div>
-            </div>
+        <article className="section-panel">
+          <SectionHeader kicker="可视化编辑器" title={editingRuleSetId ? "编辑规则集" : "创建规则集"} />
+          <form className="rule-form" onSubmit={(event) => void handleCreateRuleSet(event)}>
+            <label>
+              规则集名称
+              <input value={ruleSetName} onChange={(event) => setRuleSetName(event.target.value)} />
+            </label>
+            <label>
+              说明
+              <textarea value={ruleSetDescription} onChange={(event) => setRuleSetDescription(event.target.value)} />
+            </label>
 
-            <form className="stack-form" onSubmit={(event) => void handleCreateNode(event)}>
-              <input placeholder="Node name" value={nodeName} onChange={(event) => setNodeName(event.target.value)} />
-              <input placeholder="Server host" value={nodeHost} onChange={(event) => setNodeHost(event.target.value)} />
-              <div className="inline-form">
-                <select value={nodeProtocol} onChange={(event) => setNodeProtocol(event.target.value)}>
-                  {["vmess", "vless", "trojan", "shadowsocks", "hysteria2", "tuic", "snell", "socks5"].map((value) => (
-                    <option key={value} value={value}>
-                      {value}
-                    </option>
-                  ))}
-                </select>
-                <input value={nodePort} onChange={(event) => setNodePort(event.target.value)} />
-              </div>
-              <input
-                placeholder="tags,comma,separated"
-                value={nodeTags}
-                onChange={(event) => setNodeTags(event.target.value)}
-              />
-              <button type="submit">Create node</button>
-            </form>
-
-            <form className="stack-form import-form" onSubmit={(event) => void handleImportNodes(event)}>
-              <textarea
-                placeholder="Paste vmess://, vless://, trojan://, or ss:// links here, one per line."
-                value={nodeImportContent}
-                onChange={(event) => setNodeImportContent(event.target.value)}
-              />
-              <button type="submit">Import share links</button>
-              {nodeImportStatus ? <p className="status">{nodeImportStatus}</p> : null}
-            </form>
-
-            <div className="entity-list">
-              {nodes.map((item) => (
-                <div className="entity-card" key={item.id}>
+            <div className="draft-rule-list">
+              {draftRules.map((rule, index) => (
+                <div className="draft-rule" key={rule.id}>
                   <div className="entity-head">
-                    <strong>{item.name}</strong>
-                    <span>{item.protocol}</span>
+                    <strong>规则 {index + 1}</strong>
+                    <span>{rule.enabled ? "启用" : "停用"}</span>
                   </div>
-                  <p>
-                    {item.serverHost}:{item.serverPort}
-                  </p>
-                  <div className="chip-row">
-                    {item.tags.map((tag) => (
-                      <span className="chip" key={tag}>
-                        {tag}
-                      </span>
+                  <select value={rule.ruleType} onChange={(event) => updateDraftRule(rule.id, { ruleType: event.target.value })}>
+                    {ruleTypes.map((value) => (
+                      <option key={value.key} value={value.key}>
+                        {value.key}
+                      </option>
                     ))}
+                  </select>
+                  <input
+                    value={rule.pattern}
+                    disabled={rule.ruleType === "MATCH"}
+                    onChange={(event) => updateDraftRule(rule.id, { pattern: event.target.value })}
+                    placeholder={ruleTypes.find((item) => item.key === rule.ruleType)?.patternHint ?? ""}
+                  />
+                  <select value={rule.policy} onChange={(event) => updateDraftRule(rule.id, { policy: event.target.value })}>
+                    {policyOptions.map((value) => (
+                      <option key={value} value={value}>
+                        {value}
+                      </option>
+                    ))}
+                  </select>
+                  <input value={rule.note} onChange={(event) => updateDraftRule(rule.id, { note: event.target.value })} placeholder="备注" />
+                  <label className="check-row">
+                    <input
+                      type="checkbox"
+                      checked={rule.enabled}
+                      onChange={(event) => updateDraftRule(rule.id, { enabled: event.target.checked })}
+                    />
+                    启用此规则
+                  </label>
+                  <div className="action-row">
+                    <button type="button" className="ghost-button" onClick={() => moveDraftRule(rule.id, -1)}>
+                      上移
+                    </button>
+                    <button type="button" className="ghost-button" onClick={() => moveDraftRule(rule.id, 1)}>
+                      下移
+                    </button>
+                      <button type="button" className="ghost-button danger-button" onClick={() => removeDraftRule(rule.id)}>
+                        删除
+                      </button>
                   </div>
-                  <button type="button" className="ghost-button" onClick={() => void deleteNode(item.id)}>
-                    Delete
-                  </button>
-                  <button
-                    type="button"
-                    className="ghost-button"
-                    onClick={() =>
-                      void updateNode(item.id, {
-                        name: item.name,
-                        sourceKind: item.sourceKind,
-                        protocol: item.protocol,
-                        serverHost: item.serverHost,
-                        serverPort: item.serverPort,
-                        tags: item.tags,
-                        metadata: item.metadata,
-                        enabled: !item.enabled,
-                      })
-                    }
-                  >
-                    {item.enabled ? "Disable" : "Enable"}
-                  </button>
                 </div>
               ))}
             </div>
-          </article>
 
-          <article className="panel">
-            <div className="template-box">
-              <p className="eyebrow">Templates</p>
-              <h3>Built-in and private templates</h3>
-              <form className="stack-form" onSubmit={(event) => void handleCreateTemplate(event)}>
-                <input
-                  placeholder="Template name"
-                  value={templateName}
-                  onChange={(event) => setTemplateName(event.target.value)}
-                />
-                <input
-                  placeholder="Description"
-                  value={templateDescription}
-                  onChange={(event) => setTemplateDescription(event.target.value)}
-                />
-                <input
-                  placeholder="var1,var2,var3"
-                  value={templateVariables}
-                  onChange={(event) => setTemplateVariables(event.target.value)}
-                />
-                <textarea value={templateContent} onChange={(event) => setTemplateContent(event.target.value)} />
-                <button type="submit">Create template</button>
-              </form>
-              <div className="template-list">
-                {templates.map((template) => (
-                  <div className="template-row" key={template.id}>
-                    <div>
-                      <strong>{template.name}</strong>
-                      <p>{template.description}</p>
-                      <code>{template.variables.join(", ")}</code>
-                    </div>
-                    <div className="template-actions">
-                      <span>{template.kind}</span>
-                      {!template.locked ? (
-                        <button type="button" className="ghost-button" onClick={() => void deleteTemplate(template.id)}>
-                          Delete
-                        </button>
-                      ) : null}
-                    </div>
+            {ruleValidation ? <pre className="validation-box">{ruleValidation}</pre> : null}
+
+            <div className="action-row">
+              <button type="button" onClick={() => setDraftRules((current) => [...current, { ...emptyDraftRule(), sortOrder: current.length + 1 }])}>
+                添加规则
+              </button>
+              <button type="submit">{editingRuleSetId ? "更新规则集" : "保存规则集"}</button>
+              {editingRuleSetId ? (
+                <button type="button" className="ghost-button" onClick={resetRuleEditor}>
+                  取消编辑
+                </button>
+              ) : null}
+            </div>
+          </form>
+        </article>
+      </section>
+    );
+  }
+
+  function renderTemplatesSection() {
+    return (
+      <section className="page-grid two-column">
+        <article className="section-panel">
+          <SectionHeader kicker="模板编辑" title="新增或调整模板" note="把模板变量和正文放在同一个表单里，便于后续快速绑定订阅输出。" />
+          <form className="stack-form" onSubmit={(event) => void handleCreateTemplate(event)}>
+            <input placeholder="模板名称" value={templateName} onChange={(event) => setTemplateName(event.target.value)} />
+            <input placeholder="模板说明" value={templateDescription} onChange={(event) => setTemplateDescription(event.target.value)} />
+            <input placeholder="变量名，逗号分隔" value={templateVariables} onChange={(event) => setTemplateVariables(event.target.value)} />
+            <textarea value={templateContent} onChange={(event) => setTemplateContent(event.target.value)} />
+            <button type="submit">创建模板</button>
+          </form>
+        </article>
+
+        <article className="section-panel">
+          <SectionHeader kicker="模板列表" title="内置与私有模板" />
+          <div className="template-list">
+            {templates.length ? (
+              templates.map((template) => (
+                <div className="template-row" key={template.id}>
+                  <div>
+                    <strong>{template.name}</strong>
+                    <p>{template.description}</p>
+                    <code>{template.variables.join(", ")}</code>
                   </div>
-                ))}
-              </div>
-            </div>
-          </article>
+                  <div className="template-actions">
+                    <span>{template.kind}</span>
+                    {!template.locked ? (
+                      <button type="button" className="ghost-button" onClick={() => void deleteTemplate(template.id)}>
+                        删除
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+              ))
+            ) : (
+              <EmptyState title="模板库暂时为空" note="创建模板后，可以在订阅页把它绑定到不同客户端输出格式。" />
+            )}
+          </div>
+        </article>
+      </section>
+    );
+  }
 
-          <article className="panel">
-            <div className="panel-head">
-              <div>
-                <p className="eyebrow">Subscriptions</p>
-                <h3>Bind formats to templates</h3>
-              </div>
-            </div>
-            <form className="stack-form" onSubmit={(event) => void handleCreateSubscription(event)}>
-              <input
-                placeholder="Subscription name"
-                value={subscriptionName}
-                onChange={(event) => setSubscriptionName(event.target.value)}
-              />
-              <select value={subscriptionFormat} onChange={(event) => setSubscriptionFormat(event.target.value)}>
-                {outputFormats.map((value) => (
-                  <option key={value} value={value}>
-                    {value}
-                  </option>
-                ))}
-              </select>
-              <select value={subscriptionTemplateId} onChange={(event) => setSubscriptionTemplateId(event.target.value)}>
-                {templates.map((template) => (
-                  <option key={template.id} value={template.id}>
-                    {template.name}
-                  </option>
-                ))}
-              </select>
-              <input
-                placeholder="manual,imported,remote-sync"
-                value={subscriptionSources}
-                onChange={(event) => setSubscriptionSources(event.target.value)}
-              />
-              <button type="submit">Create subscription</button>
-            </form>
+  function renderSubscriptionsSection() {
+    return (
+      <section className="page-grid dashboard-grid">
+        <article className="section-panel">
+          <SectionHeader kicker="订阅输出" title="创建订阅" />
+          <form className="stack-form" onSubmit={(event) => void handleCreateSubscription(event)}>
+            <input placeholder="订阅名称" value={subscriptionName} onChange={(event) => setSubscriptionName(event.target.value)} />
+            <select value={subscriptionFormat} onChange={(event) => setSubscriptionFormat(event.target.value)}>
+              {outputFormats.map((value) => (
+                <option key={value} value={value}>
+                  {value}
+                </option>
+              ))}
+            </select>
+            <select value={subscriptionTemplateId} onChange={(event) => setSubscriptionTemplateId(event.target.value)}>
+              {templates.map((template) => (
+                <option key={template.id} value={template.id}>
+                  {template.name}
+                </option>
+              ))}
+            </select>
+            <input placeholder="来源，逗号分隔" value={subscriptionSources} onChange={(event) => setSubscriptionSources(event.target.value)} />
+            <button type="submit">创建订阅</button>
+          </form>
+        </article>
 
-            <div className="entity-list">
-              {subscriptions.map((item) => (
+        <article className="section-panel span-2">
+          <SectionHeader kicker="订阅列表" title="预览、下载与清理" />
+          <div className="entity-list">
+            {subscriptions.length ? (
+              subscriptions.map((item) => (
                 <div className="entity-card" key={item.id}>
                   <div className="entity-head">
                     <strong>{item.name}</strong>
                     <span>{item.outputFormat}</span>
                   </div>
-                  <p>{item.templateId}</p>
+                  <p>模板：{item.templateId}</p>
                   <div className="chip-row">
                     {item.sources.map((source) => (
                       <span className="chip" key={source}>
@@ -1228,524 +1168,361 @@ export function App() {
                   </div>
                   <div className="action-row">
                     <button type="button" className="ghost-button" onClick={() => void handlePreviewSubscription(item.id)}>
-                      Preview
+                      预览
                     </button>
                     <a className="ghost-link" href={subscriptionDownloadURL(item.id)}>
-                      Download
+                      下载
                     </a>
-                    <button type="button" className="ghost-button" onClick={() => void deleteSubscription(item.id)}>
-                      Delete
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            {previewError ? <p className="status error">{previewError}</p> : null}
-            {renderedSubscription ? (
-              <div className="preview-box">
-                <div className="entity-head">
-                  <strong>{renderedSubscription.fileName}</strong>
-                  <span>{renderedSubscription.outputFormat}</span>
-                </div>
-                <pre>{renderedSubscription.content}</pre>
-              </div>
-            ) : null}
-          </article>
-
-          <article className="panel">
-            <div className="panel-head">
-              <div>
-                <p className="eyebrow">Packages</p>
-                <h3>Plans and user entitlements</h3>
-              </div>
-            </div>
-            <form className="stack-form" onSubmit={(event) => void handleCreatePackage(event)}>
-              <input value={packageName} onChange={(event) => setPackageName(event.target.value)} />
-              <input value={packageDescription} onChange={(event) => setPackageDescription(event.target.value)} />
-              <div className="inline-form">
-                <input value={packageBandwidth} onChange={(event) => setPackageBandwidth(event.target.value)} placeholder="bytes" />
-                <input value={packageDevices} onChange={(event) => setPackageDevices(event.target.value)} placeholder="devices" />
-              </div>
-              <input value={packageDuration} onChange={(event) => setPackageDuration(event.target.value)} placeholder="duration days" />
-              <input value={packageFeatures} onChange={(event) => setPackageFeatures(event.target.value)} placeholder="features" />
-              <button type="submit">Create package</button>
-            </form>
-
-            <form className="stack-form" onSubmit={(event) => void handleCreateEntitlement(event)}>
-              <select value={entitlementUserId} onChange={(event) => setEntitlementUserId(event.target.value)}>
-                {[{ id: "local-admin", username: "local-admin" }, ...users.filter((user) => user.id !== "local-admin")].map((user) => (
-                  <option key={user.id} value={user.id}>
-                    {user.username}
-                  </option>
-                ))}
-              </select>
-              <select value={entitlementPackageId} onChange={(event) => setEntitlementPackageId(event.target.value)}>
-                <option value="">Select package</option>
-                {packages.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.name}
-                  </option>
-                ))}
-              </select>
-              <input value={entitlementExpiresAt} onChange={(event) => setEntitlementExpiresAt(event.target.value)} placeholder="expires at, optional" />
-              <button type="submit">Bind entitlement</button>
-            </form>
-
-            <MiniList
-              items={packages.map((item) => ({
-                id: item.id,
-                title: item.name,
-                subtitle: `${item.deviceLimit} devices / ${formatBytes(item.bandwidthBytes)} / ${item.durationDays} days`,
-              }))}
-              onDelete={(id) => void runOps(() => deletePackage(id))}
-            />
-            <MiniList
-              items={entitlements.map((item) => ({
-                id: item.id,
-                title: `${item.userId} -> ${packages.find((pkg) => pkg.id === item.packageId)?.name ?? item.packageId}`,
-                subtitle: `${item.status}${item.expiresAt ? ` until ${item.expiresAt}` : ""}`,
-              }))}
-              onDelete={(id) => void runOps(() => deleteEntitlement(id))}
-            />
-          </article>
-        </section>
-
-        <section className="remote-layout">
-          <article className="panel">
-            <div className="panel-head">
-              <div>
-                <p className="eyebrow">Remote Servers</p>
-                <h3>Register VPS and queue operations</h3>
-              </div>
-            </div>
-
-            <form className="stack-form" onSubmit={(event) => void handleCreateRemoteServer(event)}>
-              <input
-                placeholder="Server name"
-                value={remoteName}
-                onChange={(event) => setRemoteName(event.target.value)}
-              />
-              <input
-                placeholder="Host or public IP"
-                value={remoteHost}
-                onChange={(event) => setRemoteHost(event.target.value)}
-              />
-              <div className="inline-form">
-                <select value={remoteConnectionMode} onChange={(event) => setRemoteConnectionMode(event.target.value)}>
-                  {["pull", "websocket", "http"].map((value) => (
-                    <option key={value} value={value}>
-                      {value}
-                    </option>
-                  ))}
-                </select>
-                <input
-                  placeholder="tags"
-                  value={remoteTags}
-                  onChange={(event) => setRemoteTags(event.target.value)}
-                />
-              </div>
-              <button type="submit">Register server</button>
-            </form>
-
-            {remoteEnrollment ? (
-              <div className="token-box">
-                <div className="entity-head">
-                  <strong>Enrollment tokens for {remoteEnrollment.server.name}</strong>
-                  <span>show once</span>
-                </div>
-                <code>server: {remoteEnrollment.serverToken}</code>
-                <code>agent: {remoteEnrollment.agentToken}</code>
-              </div>
-            ) : null}
-
-            {remoteError ? <p className="status error">{remoteError}</p> : null}
-          </article>
-
-          <article className="panel">
-            <div className="panel-head">
-              <div>
-                <p className="eyebrow">Task Queue</p>
-                <h3>Choose an operation payload</h3>
-              </div>
-            </div>
-            <div className="stack-form">
-              <select value={remoteTaskKind} onChange={(event) => setRemoteTaskKind(event.target.value)}>
-                {[
-                  "reload-config",
-                  "apply-xray-config",
-                  "restart-xray",
-                  "install-xray",
-                  "install-nginx",
-                  "renew-certificate",
-                  "install-warp",
-                  "shell-script",
-                ].map((value) => (
-                  <option key={value} value={value}>
-                    {value}
-                  </option>
-                ))}
-              </select>
-              <textarea value={remoteTaskPayload} onChange={(event) => setRemoteTaskPayload(event.target.value)} />
-              <p>Payload is JSON and will be stored with the queued task for the agent executor.</p>
-            </div>
-          </article>
-
-          <article className="panel remote-list-panel">
-            <div className="entity-list">
-              {remoteServers.map((server) => (
-                <div className="entity-card" key={server.id}>
-                  <div className="entity-head">
-                    <strong>{server.name}</strong>
-                    <span>{server.status}</span>
-                  </div>
-                  <p>
-                    {server.host} via {server.connectionMode}
-                  </p>
-                  <div className="chip-row">
-                    {Array.isArray(server.metadata.tags)
-                      ? server.metadata.tags.map((tag) => (
-                          <span className="chip" key={String(tag)}>
-                            {String(tag)}
-                          </span>
-                        ))
-                      : null}
-                  </div>
-                  <div className="action-row">
-                    <button type="button" className="ghost-button" onClick={() => void handleSetRemoteStatus(server.id, "online")}>
-                      Mark online
-                    </button>
-                    <button type="button" className="ghost-button" onClick={() => void handleSetRemoteStatus(server.id, "maintenance")}>
-                      Maintenance
-                    </button>
-                    <button type="button" className="ghost-button" onClick={() => void handleCreateRemoteTask(server.id)}>
-                      Queue task
-                    </button>
-                    <button type="button" className="ghost-button" onClick={() => void handleLoadRemoteTasks(server.id)}>
-                      Load tasks
-                    </button>
-                    <button type="button" className="ghost-button" onClick={() => void handleLoadRemoteLogs(server.id)}>
-                      Load logs
-                    </button>
-                    <button type="button" className="ghost-button" onClick={() => void deleteRemoteServer(server.id)}>
-                      Delete
-                    </button>
-                  </div>
-
-                  {remoteTasks[server.id]?.length ? (
-                    <div className="task-list">
-                      {remoteTasks[server.id].map((task) => (
-                        <div className="rule-row" key={task.id}>
-                          <span>{task.status}</span>
-                          <code>{task.taskKind}</code>
-                          <small>{task.createdAt}</small>
-                          <button type="button" className="ghost-button" onClick={() => void handleLoadRemoteTaskLogs(server.id, task.id)}>
-                            Logs
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  ) : null}
-
-                  {remoteAgentLogs[server.id]?.length ? (
-                    <div className="log-list">
-                      <strong>Agent logs</strong>
-                      {remoteAgentLogs[server.id].slice(0, 6).map((logItem) => (
-                        <div className="log-row" key={logItem.id}>
-                          <span>{logItem.level}</span>
-                          <code>{logItem.message}</code>
-                          <small>{logItem.createdAt}</small>
-                        </div>
-                      ))}
-                    </div>
-                  ) : null}
-
-                  {remoteTasks[server.id]?.flatMap((task) => remoteTaskLogs[`${server.id}:${task.id}`] ?? []).length ? (
-                    <div className="log-list">
-                      <strong>Task logs</strong>
-                      {remoteTasks[server.id]
-                        .flatMap((task) => remoteTaskLogs[`${server.id}:${task.id}`] ?? [])
-                        .slice(0, 8)
-                        .map((logItem) => (
-                          <div className="log-row" key={logItem.id}>
-                            <span>{logItem.eventKind}</span>
-                            <code>{logItem.message || logItem.remoteTaskId}</code>
-                            <small>{logItem.createdAt}</small>
-                          </div>
-                        ))}
-                    </div>
-                  ) : null}
-                </div>
-              ))}
-            </div>
-          </article>
-        </section>
-
-        <section className="operations-grid">
-          <article className="panel">
-            <p className="eyebrow">Proxy Groups</p>
-            <h3>Policy groups</h3>
-            <form className="stack-form" onSubmit={(event) => void handleCreateProxyGroup(event)}>
-              <input value={proxyGroupName} onChange={(event) => setProxyGroupName(event.target.value)} />
-              <select value={proxyGroupKind} onChange={(event) => setProxyGroupKind(event.target.value)}>
-                {["select", "url-test", "fallback", "load-balance", "relay"].map((value) => (
-                  <option key={value} value={value}>
-                    {value}
-                  </option>
-                ))}
-              </select>
-              <textarea value={proxyGroupConfig} onChange={(event) => setProxyGroupConfig(event.target.value)} />
-              <button type="submit">Create group</button>
-            </form>
-            <MiniList
-              items={proxyGroups.map((item) => ({ id: item.id, title: item.name, subtitle: item.groupKind }))}
-              onDelete={(id) => void runOps(() => deleteProxyGroup(id))}
-            />
-          </article>
-
-          <article className="panel">
-            <p className="eyebrow">DNS</p>
-            <h3>Provider accounts</h3>
-            <form className="stack-form" onSubmit={(event) => void handleCreateDNSProvider(event)}>
-              <input value={dnsProviderName} onChange={(event) => setDNSProviderName(event.target.value)} />
-              <select value={dnsProviderKind} onChange={(event) => setDNSProviderKind(event.target.value)}>
-                {["cloudflare", "alidns", "dnspod", "tencent", "godaddy", "namesilo"].map((value) => (
-                  <option key={value} value={value}>
-                    {value}
-                  </option>
-                ))}
-              </select>
-              <textarea value={dnsCredentials} onChange={(event) => setDNSCredentials(event.target.value)} />
-              <button type="submit">Save provider</button>
-            </form>
-            <MiniList
-              items={dnsProviders.map((item) => ({ id: item.id, title: item.name, subtitle: item.providerKind }))}
-              onDelete={(id) => void runOps(() => deleteDNSProvider(id))}
-            />
-          </article>
-
-          <article className="panel">
-            <p className="eyebrow">Certificates</p>
-            <h3>ACME inventory</h3>
-            <form className="stack-form" onSubmit={(event) => void handleCreateCertificate(event)}>
-              <input value={certificateName} onChange={(event) => setCertificateName(event.target.value)} />
-              <input value={certificateDomain} onChange={(event) => setCertificateDomain(event.target.value)} />
-              <button type="submit">Create certificate record</button>
-            </form>
-            <MiniList
-              items={certificates.map((item) => ({ id: item.id, title: item.name, subtitle: item.domain }))}
-              onDelete={(id) => void runOps(() => deleteCertificate(id))}
-            />
-          </article>
-
-            <article className="panel">
-              <p className="eyebrow">Notifications</p>
-              <h3>Alert channels</h3>
-              <form className="stack-form" onSubmit={(event) => void handleCreateNotification(event)}>
-                <input value={notificationName} onChange={(event) => setNotificationName(event.target.value)} />
-                <textarea value={notificationConfig} onChange={(event) => setNotificationConfig(event.target.value)} />
-                <button type="submit">Create channel</button>
-              </form>
-              <MiniList
-                items={notificationChannels.map((item) => ({
-                  id: item.id,
-                  title: item.name,
-                  subtitle: `${item.channelKind} ${item.enabled ? "enabled" : "disabled"}`,
-                }))}
-                onDelete={(id) => void runOps(() => deleteNotificationChannel(id))}
-                renderActions={(item) => (
-                  <button
-                    type="button"
-                    className="ghost-button"
-                    onClick={() => void runOps(() => testNotificationChannel(item.id, { message: "HarborX test notification" }))}
-                  >
-                    Test
+                  <button type="button" className="ghost-button danger-button" onClick={() => void deleteSubscription(item.id)}>
+                    删除
                   </button>
-                )}
-              />
-            </article>
-
-            <article className="panel">
-              <p className="eyebrow">Backups</p>
-              <h3>Backup ledger</h3>
-              <form className="stack-form" onSubmit={(event) => void handleCreateBackup(event)}>
-                <input
-                  value={backupPath}
-                  onChange={(event) => setBackupPath(event.target.value)}
-                  placeholder="Export path is generated automatically"
-                />
-                <button type="submit">Export database</button>
-              </form>
-              <MiniList
-                items={backups.map((item) => ({ id: item.id, title: item.backupKind, subtitle: item.filePath }))}
-                onDelete={(id) => void runOps(() => deleteBackup(id))}
-              />
-          </article>
-
-          <article className="panel">
-            <p className="eyebrow">System</p>
-            <h3>Runtime settings</h3>
-            <form className="stack-form" onSubmit={(event) => void handleUpsertSetting(event)}>
-              <input value={settingKey} onChange={(event) => setSettingKey(event.target.value)} />
-              <textarea value={settingValue} onChange={(event) => setSettingValue(event.target.value)} />
-              <button type="submit">Save setting</button>
-            </form>
-            <MiniList
-              items={systemSettings.map((item) => ({ id: item.key, title: item.key, subtitle: JSON.stringify(item.value) }))}
-              onDelete={(id) => void runOps(() => deleteSystemSetting(id))}
-            />
-          </article>
-
-          <article className="panel">
-            <p className="eyebrow">Traffic</p>
-            <h3>Usage samples</h3>
-            <form className="stack-form" onSubmit={(event) => void handleCreateTrafficSample(event)}>
-              <div className="inline-form">
-                <select value={trafficScope} onChange={(event) => setTrafficScope(event.target.value)}>
-                  {["server", "node", "user"].map((value) => (
-                    <option key={value} value={value}>
-                      {value}
-                    </option>
-                  ))}
-                </select>
-                <input value={trafficScopeID} onChange={(event) => setTrafficScopeID(event.target.value)} />
-              </div>
-              <div className="inline-form">
-                <input value={trafficRX} onChange={(event) => setTrafficRX(event.target.value)} placeholder="rx bytes" />
-                <input value={trafficTX} onChange={(event) => setTrafficTX(event.target.value)} placeholder="tx bytes" />
-              </div>
-              <button type="submit">Record sample</button>
-            </form>
-            <MiniList
-              items={trafficSamples.map((item) => ({
-                id: item.id,
-                title: `${item.sampleScope}:${item.scopeId}`,
-                subtitle: `rx ${item.rxBytes} / tx ${item.txBytes}`,
-              }))}
-            />
-            <MiniList
-              items={trafficRollups.map((item) => ({
-                id: `${item.sampleScope}:${item.scopeId}`,
-                title: `${item.sampleScope}:${item.scopeId}`,
-                subtitle: `${formatBytes(item.rxBytes + item.txBytes)} total / ${item.samples} samples / ${item.lastSeenAt || "never"}`,
-              }))}
-            />
-          </article>
-
-          <article className="panel ops-resource-panel">
-            <p className="eyebrow">Advanced Ops</p>
-            <h3>Full-stack automation resources</h3>
-            <form className="stack-form" onSubmit={(event) => void handleCreateOpsResource(event)}>
-              <select value={opsResourceKind} onChange={(event) => handleOpsKindChange(event.target.value)}>
-                {opsResourceKinds.map((kind) => (
-                  <option key={kind} value={kind}>
-                    {kind}
-                  </option>
-                ))}
-              </select>
-              <input value={opsResourceName} onChange={(event) => setOpsResourceName(event.target.value)} />
-              <select value={opsRemoteServerId} onChange={(event) => setOpsRemoteServerId(event.target.value)}>
-                <option value="">Local draft / no VPS bound</option>
-                {remoteServers.map((server) => (
-                  <option key={server.id} value={server.id}>
-                    {server.name} ({server.host})
-                  </option>
-                ))}
-              </select>
-              <input value={opsAction} onChange={(event) => setOpsAction(event.target.value)} placeholder="action, optional" />
-              <textarea value={opsConfig} onChange={(event) => setOpsConfig(event.target.value)} />
-              <button type="submit">Save resource</button>
-            </form>
-            {opsStatus ? <p className="status">{opsStatus}</p> : null}
-            <MiniList
-              items={opsResources.map((item) => ({
-                id: item.id,
-                title: item.name,
-                subtitle: `${item.resourceKind} / ${item.remoteServerId || "not bound"} / ${item.status}`,
-              }))}
-              onDelete={(id) => void runOps(() => deleteOpsResource(id))}
-              renderActions={(item) => (
-                <>
-                  <button type="button" className="ghost-button" onClick={() => void handleExecuteOpsResource(item.id, true)}>
-                    Dry-run
-                  </button>
-                  <button type="button" className="ghost-button" onClick={() => void handleExecuteOpsResource(item.id, false)}>
-                    Execute
-                  </button>
-                </>
-              )}
-            />
-          </article>
-
-          {opsError ? <p className="status error ops-error">{opsError}</p> : null}
-        </section>
-
-        <section className="panel">
-          <div className="panel-head">
-            <div>
-              <p className="eyebrow">Xray</p>
-              <h3>Configuration preview</h3>
-            </div>
-            <div className="action-row">
-              <button type="button" onClick={() => void handlePreviewXray()}>
-                Preview Xray config
-              </button>
-              <button type="button" className="ghost-button" onClick={() => void handleSaveXraySnapshot()}>
-                Save snapshot
-              </button>
-            </div>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <EmptyState title="还没有订阅" note="先创建一个订阅，再绑定模板和输出格式。" />
+            )}
           </div>
-          {xrayError ? <p className="status error">{xrayError}</p> : null}
-          {xrayApplyStatus ? <p className="status">{xrayApplyStatus}</p> : null}
-          <form className="xray-profile-form" onSubmit={(event) => void handleCreateXrayProfile(event)}>
-            <input value={xrayProfileName} onChange={(event) => setXrayProfileName(event.target.value)} placeholder="Profile name" />
-            <select value={xrayProfileRemoteServerId} onChange={(event) => setXrayProfileRemoteServerId(event.target.value)}>
-              <option value="">Local draft / no VPS bound</option>
-              {remoteServers.map((server) => (
-                <option key={server.id} value={server.id}>
-                  {server.name} ({server.host})
+
+          {previewError ? <p className="status error">{previewError}</p> : null}
+          {renderedSubscription ? (
+            <div className="preview-box">
+              <div className="entity-head">
+                <strong>{renderedSubscription.fileName}</strong>
+                <span>{renderedSubscription.outputFormat}</span>
+              </div>
+              <pre>{renderedSubscription.content}</pre>
+            </div>
+          ) : null}
+        </article>
+
+        <article className="section-panel">
+          <SectionHeader kicker="套餐配置" title="创建套餐" />
+          <form className="stack-form" onSubmit={(event) => void handleCreatePackage(event)}>
+            <input value={packageName} onChange={(event) => setPackageName(event.target.value)} />
+            <input value={packageDescription} onChange={(event) => setPackageDescription(event.target.value)} />
+            <div className="inline-form">
+              <input value={packageBandwidth} onChange={(event) => setPackageBandwidth(event.target.value)} placeholder="带宽字节数" />
+              <input value={packageDevices} onChange={(event) => setPackageDevices(event.target.value)} placeholder="设备数" />
+            </div>
+            <input value={packageDuration} onChange={(event) => setPackageDuration(event.target.value)} placeholder="时长（天）" />
+            <input value={packageFeatures} onChange={(event) => setPackageFeatures(event.target.value)} placeholder="功能标签" />
+            <button type="submit">创建套餐</button>
+          </form>
+          <MiniList
+            items={packages.map((item) => ({
+              id: item.id,
+              title: item.name,
+              subtitle: `${item.deviceLimit} 台设备 / ${formatBytes(item.bandwidthBytes)} / ${item.durationDays} 天`,
+            }))}
+            onDelete={(id) => void runOps(() => deletePackage(id))}
+          />
+        </article>
+
+        <article className="section-panel">
+          <SectionHeader kicker="用户绑定" title="授权套餐" />
+          <form className="stack-form" onSubmit={(event) => void handleCreateEntitlement(event)}>
+            <select value={entitlementUserId} onChange={(event) => setEntitlementUserId(event.target.value)}>
+              {[{ id: "local-admin", username: "local-admin" }, ...users.filter((user) => user.id !== "local-admin")].map((user) => (
+                <option key={user.id} value={user.id}>
+                  {user.username}
                 </option>
               ))}
             </select>
-            <select value={xrayProfileMode} onChange={(event) => setXrayProfileMode(event.target.value)}>
-              <option value="external">External Xray</option>
-              <option value="inline">Inline Xray</option>
+            <select value={entitlementPackageId} onChange={(event) => setEntitlementPackageId(event.target.value)}>
+              <option value="">选择套餐</option>
+              {packages.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.name}
+                </option>
+              ))}
             </select>
-            <input value={xrayProfileBinary} onChange={(event) => setXrayProfileBinary(event.target.value)} placeholder="xray binary" />
-            <input value={xrayProfileConfigPath} onChange={(event) => setXrayProfileConfigPath(event.target.value)} placeholder="config path" />
-            <input value={xrayProfileService} onChange={(event) => setXrayProfileService(event.target.value)} placeholder="systemd service" />
-            <button type="submit">Create Xray profile</button>
+            <input value={entitlementExpiresAt} onChange={(event) => setEntitlementExpiresAt(event.target.value)} placeholder="到期时间，可留空" />
+            <button type="submit">绑定套餐</button>
           </form>
           <MiniList
-            items={xrayProfiles.map((item) => ({
+            items={entitlements.map((item) => ({
               id: item.id,
-              title: item.name,
-              subtitle: `${item.runtimeMode} / ${item.remoteServerId || "not bound"} / ${item.configPath}`,
+              title: `${item.userId} -> ${packages.find((pkg) => pkg.id === item.packageId)?.name ?? item.packageId}`,
+              subtitle: `${item.status}${item.expiresAt ? ` / 到期 ${item.expiresAt}` : ""}`,
             }))}
-            onDelete={(id) => void runOps(() => deleteXrayProfile(id))}
-            renderActions={(item) => (
+            onDelete={(id) => void runOps(() => deleteEntitlement(id))}
+          />
+        </article>
+      </section>
+    );
+  }
+
+  function renderUsersSection() {
+    return (
+      <section className="page-grid">
+        <article className="section-panel">
+          <SectionHeader kicker="账号管理" title="成员与操作员权限" note="创建、禁用或删除成员账号。写操作仍要求管理员会话。" />
+          {isAuthenticated ? (
+            <>
+              <form className="user-form" onSubmit={(event) => void handleCreateUser(event)}>
+                <input value={newUsername} onChange={(event) => setNewUsername(event.target.value)} placeholder="用户名" />
+                <input value={newUserPassword} onChange={(event) => setNewUserPassword(event.target.value)} placeholder="密码" type="password" />
+                <input value={newUserDisplayName} onChange={(event) => setNewUserDisplayName(event.target.value)} placeholder="显示名称" />
+                <input value={newUserEmail} onChange={(event) => setNewUserEmail(event.target.value)} placeholder="邮箱" />
+                <button type="submit">创建成员</button>
+              </form>
+              {userError ? <p className="status error">{userError}</p> : null}
+              <div className="user-list">
+                {users.map((user) => (
+                  <div className="mini-row" key={user.id}>
+                    <div>
+                      <strong>{user.displayName || user.username}</strong>
+                      <span>
+                        {user.username} / {user.role} / {user.status}
+                      </span>
+                    </div>
+                    <div className="mini-actions">
+                      <button type="button" className="ghost-button" onClick={() => void handleToggleUserStatus(user.id)}>
+                        {user.status === "active" ? "禁用" : "启用"}
+                      </button>
+                      {user.id !== "local-admin" ? (
+                      <button type="button" className="ghost-button danger-button" onClick={() => void deleteUser(user.id)}>
+                        删除
+                      </button>
+                      ) : null}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
+          ) : (
+            <div className="empty-state">
+              <strong>当前为只读会话</strong>
+              <p>先使用顶部会话条登录，再管理成员账号。</p>
+            </div>
+          )}
+        </article>
+      </section>
+    );
+  }
+
+  function renderTrafficSection() {
+    return (
+      <section className="page-grid two-column">
+        <article className="section-panel">
+          <SectionHeader kicker="流量采样" title="记录用量" />
+          <form className="stack-form" onSubmit={(event) => void handleCreateTrafficSample(event)}>
+            <div className="inline-form">
+              <select value={trafficScope} onChange={(event) => setTrafficScope(event.target.value)}>
+                {["server", "node", "user"].map((value) => (
+                  <option key={value} value={value}>
+                    {value}
+                  </option>
+                ))}
+              </select>
+              <input value={trafficScopeID} onChange={(event) => setTrafficScopeID(event.target.value)} placeholder="作用域 ID" />
+            </div>
+            <div className="inline-form">
+              <input value={trafficRX} onChange={(event) => setTrafficRX(event.target.value)} placeholder="接收字节" />
+              <input value={trafficTX} onChange={(event) => setTrafficTX(event.target.value)} placeholder="发送字节" />
+            </div>
+            <button type="submit">记录采样</button>
+          </form>
+          <MiniList
+            items={trafficSamples.map((item) => ({
+              id: item.id,
+              title: `${item.sampleScope}:${item.scopeId}`,
+              subtitle: `RX ${item.rxBytes} / TX ${item.txBytes}`,
+            }))}
+          />
+        </article>
+
+        <article className="section-panel">
+          <SectionHeader kicker="汇总视图" title="统计结果" />
+          <MiniList
+            items={trafficRollups.map((item) => ({
+              id: `${item.sampleScope}:${item.scopeId}`,
+              title: `${item.sampleScope}:${item.scopeId}`,
+              subtitle: `${formatBytes(item.rxBytes + item.txBytes)} / ${item.samples} 条样本 / ${item.lastSeenAt || "暂无时间"}`,
+            }))}
+          />
+        </article>
+      </section>
+    );
+  }
+
+  function renderRemoteSection() {
+    return (
+      <section className="page-grid dashboard-grid">
+        <article className="section-panel">
+          <SectionHeader kicker="主机纳管" title="注册远程 VPS" />
+          <form className="stack-form" onSubmit={(event) => void handleCreateRemoteServer(event)}>
+            <input placeholder="主机名称" value={remoteName} onChange={(event) => setRemoteName(event.target.value)} />
+            <input placeholder="域名或公网 IP" value={remoteHost} onChange={(event) => setRemoteHost(event.target.value)} />
+            <div className="inline-form">
+              <select value={remoteConnectionMode} onChange={(event) => setRemoteConnectionMode(event.target.value)}>
+                {["pull", "websocket", "http"].map((value) => (
+                  <option key={value} value={value}>
+                    {value}
+                  </option>
+                ))}
+              </select>
+              <input placeholder="标签" value={remoteTags} onChange={(event) => setRemoteTags(event.target.value)} />
+            </div>
+            <button type="submit">注册主机</button>
+          </form>
+          {remoteEnrollment ? (
+            <div className="token-box">
+              <div className="entity-head">
+                <strong>{remoteEnrollment.server.name} 的一次性入站令牌</strong>
+                <span>仅显示一次</span>
+              </div>
+              <code>server: {remoteEnrollment.serverToken}</code>
+              <code>agent: {remoteEnrollment.agentToken}</code>
+            </div>
+          ) : null}
+          {remoteError ? <p className="status error">{remoteError}</p> : null}
+        </article>
+
+        <article className="section-panel">
+          <SectionHeader kicker="任务模板" title="任务类型与 JSON 载荷" />
+          <div className="stack-form">
+            <select value={remoteTaskKind} onChange={(event) => setRemoteTaskKind(event.target.value)}>
+              {[
+                "reload-config",
+                "apply-xray-config",
+                "restart-xray",
+                "install-xray",
+                "install-nginx",
+                "renew-certificate",
+                "install-warp",
+                "shell-script",
+              ].map((value) => (
+                <option key={value} value={value}>
+                  {value}
+                </option>
+              ))}
+            </select>
+            <textarea value={remoteTaskPayload} onChange={(event) => setRemoteTaskPayload(event.target.value)} />
+            <p className="status">载荷会和任务一起入队，供远程 agent 执行。</p>
+          </div>
+        </article>
+
+        <article className="section-panel span-2">
+          <SectionHeader kicker="远程节点" title="主机列表、任务与日志" />
+          <div className="entity-list">
+            {remoteServers.length ? (
+              remoteServers.map((server) => (
+              <div className="entity-card" key={server.id}>
+                <div className="entity-head">
+                  <strong>{server.name}</strong>
+                  <span>{server.status}</span>
+                </div>
+                <p>
+                  {server.host} · {server.connectionMode}
+                </p>
+                <div className="chip-row">
+                  {Array.isArray(server.metadata.tags)
+                    ? server.metadata.tags.map((tag) => (
+                        <span className="chip" key={String(tag)}>
+                          {String(tag)}
+                        </span>
+                      ))
+                    : null}
+                </div>
+                <div className="action-row">
+                  <button type="button" className="ghost-button" onClick={() => void handleSetRemoteStatus(server.id, "online")}>
+                    标记在线
+                  </button>
+                  <button type="button" className="ghost-button" onClick={() => void handleSetRemoteStatus(server.id, "maintenance")}>
+                    维护模式
+                  </button>
+                  <button type="button" className="ghost-button" onClick={() => void handleCreateRemoteTask(server.id)}>
+                    队列任务
+                  </button>
+                  <button type="button" className="ghost-button" onClick={() => void handleLoadRemoteTasks(server.id)}>
+                    读取任务
+                  </button>
+                  <button type="button" className="ghost-button" onClick={() => void handleLoadRemoteLogs(server.id)}>
+                    读取日志
+                  </button>
+                  <button type="button" className="ghost-button danger-button" onClick={() => void deleteRemoteServer(server.id)}>
+                    删除
+                  </button>
+                </div>
+
+                {remoteTasks[server.id]?.length ? (
+                  <div className="task-list">
+                    {remoteTasks[server.id].map((task) => (
+                      <div className="rule-row" key={task.id}>
+                        <span>{task.status}</span>
+                        <code>{task.taskKind}</code>
+                        <small>{task.createdAt}</small>
+                        <button type="button" className="ghost-button" onClick={() => void handleLoadRemoteTaskLogs(server.id, task.id)}>
+                          任务日志
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+
+                {remoteAgentLogs[server.id]?.length ? (
+                  <div className="log-list">
+                    <strong>Agent 日志</strong>
+                    {remoteAgentLogs[server.id].slice(0, 6).map((logItem) => (
+                      <LogRow
+                        key={logItem.id}
+                        kind={logItem.level}
+                        message={logItem.message}
+                        createdAt={logItem.createdAt}
+                      />
+                    ))}
+                  </div>
+                ) : null}
+
+                {remoteTasks[server.id]?.flatMap((task) => remoteTaskLogs[`${server.id}:${task.id}`] ?? []).length ? (
+                  <div className="log-list">
+                    <strong>任务日志</strong>
+                    {remoteTasks[server.id]
+                      .flatMap((task) => remoteTaskLogs[`${server.id}:${task.id}`] ?? [])
+                      .slice(0, 8)
+                      .map((logItem) => (
+                        <LogRow
+                          key={logItem.id}
+                          kind={logItem.eventKind}
+                          message={logItem.message || logItem.remoteTaskId}
+                          createdAt={logItem.createdAt}
+                        />
+                      ))}
+                  </div>
+                ) : null}
+              </div>
+              ))
+            ) : (
+              <EmptyState title="还没有纳管 VPS" note="注册远程主机后，可以在这里入队任务、读取 Agent 日志和应用 Xray 配置。" />
+            )}
+          </div>
+        </article>
+      </section>
+    );
+  }
+
+  function renderXraySection() {
+    return (
+      <section className="page-grid dashboard-grid">
+        <article className="section-panel span-2">
+          <SectionHeader
+            kicker="配置工作区"
+            title="Xray 预览与快照"
+            actions={
               <>
-                <button type="button" className="ghost-button" onClick={() => void handleApplyXrayProfile(item.id, true)}>
-                  Dry-run
+                <button type="button" onClick={() => void handlePreviewXray()}>
+                  预览配置
                 </button>
-                <button type="button" className="ghost-button" onClick={() => void handleApplyXrayProfile(item.id, false)}>
-                  Apply
+                <button type="button" className="ghost-button" onClick={() => void handleSaveXraySnapshot()}>
+                  保存快照
                 </button>
               </>
-            )}
+            }
           />
-          <MiniList
-            items={xraySnapshots.map((item) => ({
-              id: item.id,
-              title: item.summary || item.targetId,
-              subtitle: `${item.targetKind}/${item.targetId} ${item.createdAt}`,
-            }))}
-            renderActions={(item) => (
-              <button type="button" className="ghost-button" onClick={() => void handleRestoreXraySnapshot(item.id)}>
-                Restore preview
-              </button>
-            )}
-          />
+          {xrayError ? <p className="status error">{xrayError}</p> : null}
+          {xrayApplyStatus ? <p className="status">{xrayApplyStatus}</p> : null}
           {xrayPreview ? (
             <div className="preview-box">
               <div className="entity-head">
@@ -1754,18 +1531,406 @@ export function App() {
               </div>
               <pre>{xrayPreview.content}</pre>
             </div>
-          ) : null}
+          ) : (
+            <div className="empty-state">
+              <strong>还没有预览结果</strong>
+              <p>点击“预览配置”后，这里会展示完整 JSON。</p>
+            </div>
+          )}
           {restoredSnapshot ? (
             <div className="preview-box">
               <div className="entity-head">
-                <strong>Restored snapshot content</strong>
+                <strong>已恢复快照内容</strong>
                 <span>rollback</span>
               </div>
               <pre>{restoredSnapshot}</pre>
             </div>
           ) : null}
+        </article>
+
+        <article className="section-panel">
+          <SectionHeader kicker="运行模式" title="外置与内联 Xray" />
+          <form className="xray-profile-form" onSubmit={(event) => void handleCreateXrayProfile(event)}>
+            <input value={xrayProfileName} onChange={(event) => setXrayProfileName(event.target.value)} placeholder="配置名称" />
+            <select value={xrayProfileRemoteServerId} onChange={(event) => setXrayProfileRemoteServerId(event.target.value)}>
+              <option value="">本地草稿 / 未绑定 VPS</option>
+              {remoteServers.map((server) => (
+                <option key={server.id} value={server.id}>
+                  {server.name} ({server.host})
+                </option>
+              ))}
+            </select>
+            <select value={xrayProfileMode} onChange={(event) => setXrayProfileMode(event.target.value)}>
+              <option value="external">外置 Xray</option>
+              <option value="inline">内联 Xray</option>
+            </select>
+            <input value={xrayProfileBinary} onChange={(event) => setXrayProfileBinary(event.target.value)} placeholder="xray 可执行文件" />
+            <input value={xrayProfileConfigPath} onChange={(event) => setXrayProfileConfigPath(event.target.value)} placeholder="配置路径" />
+            <input value={xrayProfileService} onChange={(event) => setXrayProfileService(event.target.value)} placeholder="systemd 服务名" />
+            <button type="submit">创建配置</button>
+          </form>
+          <MiniList
+            items={xrayProfiles.map((item) => ({
+              id: item.id,
+              title: item.name,
+              subtitle: `${item.runtimeMode} / ${item.remoteServerId || "未绑定"} / ${item.configPath}`,
+            }))}
+            onDelete={(id) => void runOps(() => deleteXrayProfile(id))}
+            renderActions={(item) => (
+              <>
+                <button type="button" className="ghost-button" onClick={() => void handleApplyXrayProfile(item.id, true)}>
+                  Dry-run
+                </button>
+                <button type="button" className="ghost-button" onClick={() => void handleApplyXrayProfile(item.id, false)}>
+                  应用
+                </button>
+              </>
+            )}
+          />
+        </article>
+
+        <article className="section-panel">
+          <SectionHeader kicker="代理组" title="策略分组" />
+          <form className="stack-form" onSubmit={(event) => void handleCreateProxyGroup(event)}>
+            <input value={proxyGroupName} onChange={(event) => setProxyGroupName(event.target.value)} />
+            <select value={proxyGroupKind} onChange={(event) => setProxyGroupKind(event.target.value)}>
+              {["select", "url-test", "fallback", "load-balance", "relay"].map((value) => (
+                <option key={value} value={value}>
+                  {value}
+                </option>
+              ))}
+            </select>
+            <textarea value={proxyGroupConfig} onChange={(event) => setProxyGroupConfig(event.target.value)} />
+            <button type="submit">创建分组</button>
+          </form>
+          <MiniList
+            items={proxyGroups.map((item) => ({ id: item.id, title: item.name, subtitle: item.groupKind }))}
+            onDelete={(id) => void runOps(() => deleteProxyGroup(id))}
+          />
+        </article>
+
+        <article className="section-panel">
+          <SectionHeader kicker="快照历史" title="回滚素材" />
+          <MiniList
+            items={xraySnapshots.map((item) => ({
+              id: item.id,
+              title: item.summary || item.targetId,
+              subtitle: `${item.targetKind}/${item.targetId} · ${item.createdAt}`,
+            }))}
+            renderActions={(item) => (
+              <button type="button" className="ghost-button" onClick={() => void handleRestoreXraySnapshot(item.id)}>
+                恢复预览
+              </button>
+            )}
+          />
+        </article>
+      </section>
+    );
+  }
+
+  function renderSystemSection() {
+    return (
+      <section className="page-grid dashboard-grid">
+        <article className="section-panel">
+          <SectionHeader kicker="DNS" title="解析服务商" />
+          <form className="stack-form" onSubmit={(event) => void handleCreateDNSProvider(event)}>
+            <input value={dnsProviderName} onChange={(event) => setDNSProviderName(event.target.value)} />
+            <select value={dnsProviderKind} onChange={(event) => setDNSProviderKind(event.target.value)}>
+              {["cloudflare", "alidns", "dnspod", "tencent", "godaddy", "namesilo"].map((value) => (
+                <option key={value} value={value}>
+                  {value}
+                </option>
+              ))}
+            </select>
+            <textarea value={dnsCredentials} onChange={(event) => setDNSCredentials(event.target.value)} />
+            <button type="submit">保存服务商</button>
+          </form>
+          <MiniList
+            items={dnsProviders.map((item) => ({ id: item.id, title: item.name, subtitle: item.providerKind }))}
+            onDelete={(id) => void runOps(() => deleteDNSProvider(id))}
+          />
+        </article>
+
+        <article className="section-panel">
+          <SectionHeader kicker="证书" title="ACME 资产" />
+          <form className="stack-form" onSubmit={(event) => void handleCreateCertificate(event)}>
+            <input value={certificateName} onChange={(event) => setCertificateName(event.target.value)} />
+            <input value={certificateDomain} onChange={(event) => setCertificateDomain(event.target.value)} />
+            <button type="submit">创建证书记录</button>
+          </form>
+          <MiniList
+            items={certificates.map((item) => ({ id: item.id, title: item.name, subtitle: item.domain }))}
+            onDelete={(id) => void runOps(() => deleteCertificate(id))}
+          />
+        </article>
+
+        <article className="section-panel">
+          <SectionHeader kicker="通知" title="告警通道" />
+          <form className="stack-form" onSubmit={(event) => void handleCreateNotification(event)}>
+            <input value={notificationName} onChange={(event) => setNotificationName(event.target.value)} />
+            <textarea value={notificationConfig} onChange={(event) => setNotificationConfig(event.target.value)} />
+            <button type="submit">创建通道</button>
+          </form>
+          <MiniList
+            items={notificationChannels.map((item) => ({
+              id: item.id,
+              title: item.name,
+              subtitle: `${item.channelKind} / ${item.enabled ? "启用" : "停用"}`,
+            }))}
+            onDelete={(id) => void runOps(() => deleteNotificationChannel(id))}
+            renderActions={(item) => (
+              <button
+                type="button"
+                className="ghost-button"
+                onClick={() => void runOps(() => testNotificationChannel(item.id, { message: "HarborX test notification" }))}
+              >
+                测试
+              </button>
+            )}
+          />
+        </article>
+
+        <article className="section-panel">
+          <SectionHeader kicker="备份" title="数据库导出" />
+          <form className="stack-form" onSubmit={(event) => void handleCreateBackup(event)}>
+            <input value={backupPath} onChange={(event) => setBackupPath(event.target.value)} placeholder="导出路径" />
+            <button type="submit">导出备份</button>
+          </form>
+          <MiniList
+            items={backups.map((item) => ({ id: item.id, title: item.backupKind, subtitle: item.filePath }))}
+            onDelete={(id) => void runOps(() => deleteBackup(id))}
+          />
+        </article>
+
+        <article className="section-panel">
+          <SectionHeader kicker="系统设置" title="运行时配置" />
+          <form className="stack-form" onSubmit={(event) => void handleUpsertSetting(event)}>
+            <input value={settingKey} onChange={(event) => setSettingKey(event.target.value)} />
+            <textarea value={settingValue} onChange={(event) => setSettingValue(event.target.value)} />
+            <button type="submit">保存设置</button>
+          </form>
+          <MiniList
+            items={systemSettings.map((item) => ({ id: item.key, title: item.key, subtitle: JSON.stringify(item.value) }))}
+            onDelete={(id) => void runOps(() => deleteSystemSetting(id))}
+          />
+        </article>
+
+        <article className="section-panel span-2">
+          <SectionHeader
+            kicker="高级自动化"
+            title="运维资源编排"
+            note="这里集中管理 Xray 入站、证书续期、Nginx 回落和安全策略等自动化资源。"
+          />
+          <form className="stack-form" onSubmit={(event) => void handleCreateOpsResource(event)}>
+            <select value={opsResourceKind} onChange={(event) => handleOpsKindChange(event.target.value)}>
+              {opsResourceKinds.map((kind) => (
+                <option key={kind} value={kind}>
+                  {kind}
+                </option>
+              ))}
+            </select>
+            <input value={opsResourceName} onChange={(event) => setOpsResourceName(event.target.value)} />
+            <select value={opsRemoteServerId} onChange={(event) => setOpsRemoteServerId(event.target.value)}>
+              <option value="">本地草稿 / 未绑定 VPS</option>
+              {remoteServers.map((server) => (
+                <option key={server.id} value={server.id}>
+                  {server.name} ({server.host})
+                </option>
+              ))}
+            </select>
+            <input value={opsAction} onChange={(event) => setOpsAction(event.target.value)} placeholder="动作名，可选" />
+            <textarea value={opsConfig} onChange={(event) => setOpsConfig(event.target.value)} />
+            <button type="submit">保存资源</button>
+          </form>
+          {opsStatus ? <p className="status">{opsStatus}</p> : null}
+          <MiniList
+            items={opsResources.map((item) => ({
+              id: item.id,
+              title: item.name,
+              subtitle: `${item.resourceKind} / ${item.remoteServerId || "未绑定"} / ${item.status}`,
+            }))}
+            onDelete={(id) => void runOps(() => deleteOpsResource(id))}
+            renderActions={(item) => (
+              <>
+                <button type="button" className="ghost-button" onClick={() => void handleExecuteOpsResource(item.id, true)}>
+                  Dry-run
+                </button>
+                <button type="button" className="ghost-button" onClick={() => void handleExecuteOpsResource(item.id, false)}>
+                  执行
+                </button>
+              </>
+            )}
+          />
+          {opsError ? <p className="status error">{opsError}</p> : null}
+        </article>
+      </section>
+    );
+  }
+
+  function renderSectionContent() {
+    switch (activeSection) {
+      case "dashboard":
+        return renderDashboardSection();
+      case "nodes":
+        return renderNodesSection();
+      case "subscriptions":
+        return renderSubscriptionsSection();
+      case "rules":
+        return renderRulesSection();
+      case "templates":
+        return renderTemplatesSection();
+      case "users":
+        return renderUsersSection();
+      case "traffic":
+        return renderTrafficSection();
+      case "remote":
+        return renderRemoteSection();
+      case "xray":
+        return renderXraySection();
+      case "system":
+        return renderSystemSection();
+      default:
+        return renderDashboardSection();
+    }
+  }
+
+  return (
+    <div className="shell">
+      <aside className="sidebar">
+        <div className="brand-block">
+          <div className="brand-mark">HX</div>
+          <div>
+            <p className="eyebrow">HarborX Console</p>
+            <h1>自托管节点与 Xray 运维台</h1>
+            <p className="lede">按照运维控制台的逻辑重排信息层级，把节点、订阅、规则、远程执行和系统编排收在一套工作台里。</p>
+          </div>
+        </div>
+
+        <nav className="nav">
+          {consoleNavItems.map((item) => (
+            <button
+              type="button"
+              key={item.key}
+              className={item.key === activeSection ? "active" : ""}
+              onClick={() => setActiveSection(item.key)}
+            >
+              <b>{String(consoleNavItems.findIndex((navItem) => navItem.key === item.key) + 1).padStart(2, "0")}</b>
+              <span>{item.label}</span>
+              <small>{item.helper}</small>
+            </button>
+          ))}
+        </nav>
+
+        <div className="side-status">
+          <span className="signal-dot" />
+          <div>
+            <strong>{isAuthenticated ? "管理员会话已解锁" : "当前为只读浏览模式"}</strong>
+            <small>{busy ? "正在保存变更" : `${data?.dashboard.modulesTotal ?? modules.length} 个功能模块可用`}</small>
+          </div>
+        </div>
+      </aside>
+
+      <main className="content">
+        <section className="topbar">
+          <div className="topbar-copy">
+            <p className="eyebrow">Workspace</p>
+            <h2>{activeNavItem.label}</h2>
+            <p>{activeNavItem.helper}</p>
+          </div>
+          <div className="topbar-actions">
+            <div className="topbar-meta">
+              <span>{isAuthenticated ? `会话：${authUser?.username ?? authUsername}` : "会话：只读"}</span>
+              <span>{loading ? "数据同步中" : "数据已加载"}</span>
+              <span>{busy ? "写入中" : "空闲"}</span>
+            </div>
+            <button type="button" className="ghost-button" onClick={() => void refresh()}>
+              刷新数据
+            </button>
+          </div>
         </section>
+
+        <section className="section-panel session-strip">
+          <div className="section-copy">
+            <p className="section-kicker">会话与状态</p>
+            <h3 className="section-title">{isAuthenticated ? "当前已登录，可执行写操作" : "当前未登录，仅可预览和下载"}</h3>
+            <p className="section-note">创建、更新、删除和应用配置等动作都依赖管理员令牌，会话信息集中放在这里处理。</p>
+          </div>
+          {isAuthenticated ? (
+            <div className="session-actions">
+              <StatusLine label="当前账号" value={authUser?.username ?? authUsername} compact />
+              <button type="button" className="ghost-button" onClick={handleLogout}>
+                退出登录
+              </button>
+            </div>
+          ) : (
+            <form className="auth-form" onSubmit={(event) => void handleLogin(event)}>
+              <input value={authUsername} onChange={(event) => setAuthUsername(event.target.value)} placeholder="用户名" />
+              <input value={authPassword} onChange={(event) => setAuthPassword(event.target.value)} placeholder="密码" type="password" />
+              <button type="submit">登录</button>
+            </form>
+          )}
+          {authError ? <p className="status error">{authError}</p> : null}
+        </section>
+
+        <div className="status-stack">
+          {loading ? <p className="status-banner">正在加载工作区数据…</p> : null}
+          {error ? <p className="status-banner error">加载失败：{error}</p> : null}
+          {busy ? <p className="status-banner">后台正在写入变更，请稍候。</p> : null}
+        </div>
+
+        {renderSectionContent()}
       </main>
+    </div>
+  );
+}
+
+function SectionHeader({
+  kicker,
+  title,
+  note,
+  actions,
+}: {
+  kicker: string;
+  title: string;
+  note?: string;
+  actions?: ReactNode;
+}) {
+  return (
+    <div className="section-head">
+      <div className="section-copy">
+        <p className="section-kicker">{kicker}</p>
+        <h3 className="section-title">{title}</h3>
+        {note ? <p className="section-note">{note}</p> : null}
+      </div>
+      {actions ? <div className="section-actions">{actions}</div> : null}
+    </div>
+  );
+}
+
+function StatusLine({ label, value, compact = false }: { label: string; value: string; compact?: boolean }) {
+  return (
+    <div className={`status-line${compact ? " compact" : ""}`}>
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function LogRow({ kind, message, createdAt }: { kind: string; message: string; createdAt: string }) {
+  return (
+    <div className="log-row">
+      <span>{kind}</span>
+      <code>{message}</code>
+      <small>{createdAt}</small>
+    </div>
+  );
+}
+
+function EmptyState({ title, note }: { title: string; note: string }) {
+  return (
+    <div className="empty-state">
+      <strong>{title}</strong>
+      <p>{note}</p>
     </div>
   );
 }
@@ -1780,27 +1945,28 @@ function MiniList({
   renderActions?: (item: { id: string; title: string; subtitle: string }) => ReactNode;
 }) {
   if (items.length === 0) {
-    return <p className="status mini-empty">No records yet.</p>;
+    return <p className="status mini-empty">暂无记录。</p>;
   }
+
   return (
     <div className="mini-list">
       {items.map((item) => (
         <div className="mini-row" key={item.id}>
-            <div>
-              <strong>{item.title}</strong>
-              <span>{item.subtitle}</span>
-            </div>
-            <div className="mini-actions">
-              {renderActions ? renderActions(item) : null}
-              {onDelete ? (
-                <button type="button" className="ghost-button" onClick={() => onDelete(item.id)}>
-                  Delete
-                </button>
-              ) : null}
-            </div>
+          <div>
+            <strong>{item.title}</strong>
+            <span>{item.subtitle}</span>
           </div>
-        ))}
-      </div>
+          <div className="mini-actions">
+            {renderActions ? renderActions(item) : null}
+            {onDelete ? (
+              <button type="button" className="ghost-button danger-button" onClick={() => onDelete(item.id)}>
+                删除
+              </button>
+            ) : null}
+          </div>
+        </div>
+      ))}
+    </div>
   );
 }
 

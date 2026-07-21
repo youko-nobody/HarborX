@@ -1630,7 +1630,7 @@ func frontendHandler(distDir string) http.HandlerFunc {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"name": "HarborX API",
 			"notes": []string{
-				"Self-hosted scaffold inspired by miaomiaowuX",
+				"Self-hosted Xray and subscription control plane",
 				"No license or pro gating is included",
 				"Frontend build not found. Run npm run build in the web directory.",
 			},
