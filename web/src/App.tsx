@@ -743,49 +743,54 @@ export function App() {
   return (
     <div className="shell">
       <aside className="sidebar">
-        <div>
+        <div className="brand-block">
+          <div className="brand-mark">HX</div>
           <p className="eyebrow">HarborX</p>
-          <h1>Control plane for your own Xray stack</h1>
-          <p className="lede">
-            This rebuild keeps the feature breadth you want, but removes licensing and pro gating from the architecture.
-          </p>
+          <h1>节点、订阅与 Xray 运维控制台</h1>
+          <p className="lede">自用优先的全功能面板，没有授权中心，没有 Pro 限制。</p>
         </div>
 
         <nav className="nav">
           {[
-            "Dashboard",
-            "Nodes",
-            "Subscriptions",
-            "Rules Studio",
-            "Templates",
-            "Remote Servers",
-            "Xray",
-            "Certificates",
-            "Notifications",
-            "Settings",
+            "总览",
+            "节点管理",
+            "订阅生成",
+            "Clash 规则",
+            "模板仓库",
+            "VPS 远程",
+            "Xray 配置",
+            "证书 DNS",
+            "通知备份",
+            "系统设置",
           ].map((item) => (
             <a href="/" key={item} onClick={(event) => event.preventDefault()}>
               {item}
             </a>
           ))}
         </nav>
+
+        <div className="side-status">
+          <span className="signal-dot" />
+          <div>
+            <strong>{isAuthenticated ? "控制台已解锁" : "只读预览模式"}</strong>
+            <small>{data ? `${data.dashboard.modulesTotal} 个功能域在线` : "等待数据同步"}</small>
+          </div>
+        </div>
       </aside>
 
       <main className="content">
         <section className="hero">
           <div>
-            <p className="eyebrow">Phase 1 scaffold</p>
-            <h2>Core CRUD is now live for the first slice</h2>
-            <p>
-              HarborX now has real SQLite-backed CRUD for nodes, rule sets, templates, and subscriptions, while keeping the rest of the control-plane surface ready for the next implementation passes.
-            </p>
+            <p className="eyebrow">Self-hosted Xray Panel</p>
+            <h2>一套面板管理节点、订阅、规则和 VPS 自动化</h2>
+            <p>保留你要的完整功能面，去掉授权和 Pro 门槛，重点放在节点生命周期、Clash 规则可视化、Xray 配置预览与远程执行。</p>
           </div>
           <div className="pillbox">
-            <span>No license module</span>
-            <span>No pro checks</span>
-            <span>Selfhost-first</span>
-            <span>{isAuthenticated ? "Authenticated" : "Read-only"}</span>
-            {data ? <span>{data.dashboard.modulesTotal} modules</span> : null}
+            <span>无授权模块</span>
+            <span>无 Pro 限制</span>
+            <span>VPS 一键部署</span>
+            <span>{isAuthenticated ? "管理员在线" : "只读模式"}</span>
+            {data ? <span>{data.dashboard.modulesTotal} 个模块</span> : null}
           </div>
         </section>
 
