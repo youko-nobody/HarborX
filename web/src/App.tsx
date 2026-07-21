@@ -59,7 +59,7 @@ const opsDefaultConfig: Record<string, string> = {
 type DraftRule = Omit<RuleRecord, "id"> & { id: string };
 
 const emptyDraftRule = (): DraftRule => ({
-  id: crypto.randomUUID(),
+  id: createClientId(),
   ruleType: "DOMAIN-SUFFIX",
   pattern: "google.com",
   policy: "Proxy",
@@ -338,7 +338,7 @@ export function App() {
     setRuleSetDescription(item.description);
     setDraftRules(
       item.rules.length
-        ? item.rules.map((rule) => ({ ...rule, id: rule.id || crypto.randomUUID() }))
+        ? item.rules.map((rule) => ({ ...rule, id: rule.id || createClientId() }))
         : [emptyDraftRule()],
     );
     setRuleValidation(null);
@@ -1812,6 +1812,13 @@ function parseJSONObject(input: string): Record<string, unknown> {
     throw new Error("Payload must be a JSON object");
   }
   return parsed as Record<string, unknown>;
+}
+
+function createClientId() {
+  if (globalThis.crypto?.randomUUID) {
+    return globalThis.crypto.randomUUID();
+  }
+  return `local-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 function formatBytes(value: number) {
