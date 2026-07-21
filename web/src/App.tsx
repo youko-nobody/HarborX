@@ -137,6 +137,7 @@ export function App() {
   const backups = data?.backups ?? [];
   const systemSettings = data?.systemSettings ?? [];
   const trafficSamples = data?.trafficSamples ?? [];
+  const trafficRollups = data?.trafficRollups ?? [];
   const opsResources = data?.opsResources ?? [];
   const xraySnapshots = data?.xraySnapshots ?? [];
   const xrayProfiles = data?.xrayProfiles ?? [];
@@ -1615,6 +1616,13 @@ export function App() {
                 id: item.id,
                 title: `${item.sampleScope}:${item.scopeId}`,
                 subtitle: `rx ${item.rxBytes} / tx ${item.txBytes}`,
+              }))}
+            />
+            <MiniList
+              items={trafficRollups.map((item) => ({
+                id: `${item.sampleScope}:${item.scopeId}`,
+                title: `${item.sampleScope}:${item.scopeId}`,
+                subtitle: `${formatBytes(item.rxBytes + item.txBytes)} total / ${item.samples} samples / ${item.lastSeenAt || "never"}`,
               }))}
             />
           </article>

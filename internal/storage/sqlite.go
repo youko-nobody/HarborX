@@ -2477,6 +2477,17 @@ func (s *SQLiteStore) CreateTrafficSample(input traffic.CreateSampleInput) (traf
 	return item, nil
 }
 
+func (s *SQLiteStore) CreateTrafficSampleFromAgent(sampleScope string, scopeID string, rxBytes int64, txBytes int64, rate map[string]any) error {
+	_, err := s.CreateTrafficSample(traffic.CreateSampleInput{
+		SampleScope: sampleScope,
+		ScopeID:     scopeID,
+		RXBytes:     rxBytes,
+		TXBytes:     txBytes,
+		Rate:        rate,
+	})
+	return err
+}
+
 func (s *SQLiteStore) ListOpsResources(kind string) ([]ops.Resource, error) {
 	query := `
 		SELECT id, resource_kind, name, remote_server_id, status, config_json, enabled, created_at, updated_at

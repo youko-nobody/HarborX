@@ -297,6 +297,15 @@ export type TrafficSampleRecord = {
   recordedAt: string;
 };
 
+export type TrafficRollupRecord = {
+  sampleScope: string;
+  scopeId: string;
+  rxBytes: number;
+  txBytes: number;
+  samples: number;
+  lastSeenAt: string;
+};
+
 export type OpsResourceRecord = {
   id: string;
   resourceKind: string;
@@ -354,6 +363,7 @@ export type AppBootstrap = {
   backups: BackupRecord[];
   systemSettings: SystemSettingRecord[];
   trafficSamples: TrafficSampleRecord[];
+  trafficRollups: TrafficRollupRecord[];
   opsResources: OpsResourceRecord[];
   xraySnapshots: XraySnapshotRecord[];
   xrayProfiles: XrayProfileRecord[];
@@ -433,6 +443,7 @@ export async function loadWorkspace(): Promise<AppBootstrap> {
     backups,
     systemSettings,
     trafficSamples,
+    trafficRollups,
     opsResources,
     xraySnapshots,
     xrayProfiles,
@@ -454,6 +465,7 @@ export async function loadWorkspace(): Promise<AppBootstrap> {
     fetchJSON<BackupRecord[]>("/api/v1/backups"),
     fetchJSON<SystemSettingRecord[]>("/api/v1/system/settings"),
     fetchJSON<TrafficSampleRecord[]>("/api/v1/traffic/samples"),
+    fetchJSON<TrafficRollupRecord[]>("/api/v1/traffic/rollups"),
     fetchJSON<OpsResourceRecord[]>("/api/v1/ops/resources"),
     fetchJSON<XraySnapshotRecord[]>("/api/v1/xray/snapshots"),
     fetchJSON<XrayProfileRecord[]>("/api/v1/xray/profiles"),
@@ -478,6 +490,7 @@ export async function loadWorkspace(): Promise<AppBootstrap> {
     backups,
     systemSettings,
     trafficSamples,
+    trafficRollups,
     opsResources,
     xraySnapshots,
     xrayProfiles,

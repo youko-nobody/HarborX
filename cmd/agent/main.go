@@ -117,6 +117,9 @@ func claimAndRun(client *http.Client, cfg agentConfig) error {
 	})
 
 	output, err := runTask(cfg, task)
+	if task.TaskKind == "collect-xray-stats" && err == nil {
+		_ = reportTrafficSample(client, cfg, task.Payload, output)
+	}
 	status := "succeeded"
 	if err != nil {
 		status = "failed"
@@ -236,6 +239,53 @@ func collectXrayStats(payload map[string]any) (string, error) {
 		output = "xray stats command returned no data; confirm stats API is enabled at " + endpoint + "\n"
 	}
 	return output, err
+}
+
+func reportTrafficSample(client *http.Client, cfg agentConfig, payload map[string]any, statsOutput string) error {
+	rx, tx := parseXrayStats(statsOutput)
+	sample := map[string]any{
+		"sampleScope": payloadString(payload, "scope", "server"),
+		"scopeId":     payloadString(payload, "scopeId", "local"),
+		"rxBytes":     rx,
+		"txBytes":     tx,
+		"rate": map[string]any{
+			"source": "xray-stats",
+		},
+	}
+	return postJSON(client, cfg, "/api/v1/agent/traffic", sample, nil)
+}
+
+func parseXrayStats(output string) (int64, int64) {
+	var rx int64
+	var tx int64
+	for _, field := range strings.Fields(output) {
+		normalized := strings.Trim(field, " ,")
+		lower := strings.ToLower(normalized)
+		if strings.Contains(lower, "uplink") || strings.Contains(lower, ">>>") || strings.Contains(lower, "tx") {
+			tx += trailingNumber(normalized)
+		}
+		if strings.Contains(lower, "downlink") || strings.Contains(lower, "<<<") || strings.Contains(lower, "rx") {
+			rx += trailingNumber(normalized)
+		}
+	}
+	return rx, tx
+}
+
+func trailingNumber(value string) int64 {
+	var digits []rune
+	for _, char := range value {
+		if char >= '0' && char <= '9' {
+			digits = append(digits, char)
+		}
+	}
+	if len(digits) == 0 {
+		return 0
+	}
+	parsed, err := strconv.ParseInt(string(digits), 10, 64)
+	if err != nil {
+		return 0
+	}
+	return parsed
 }
 
 func applyNginxConfig(payload map[string]any) (string, error) {

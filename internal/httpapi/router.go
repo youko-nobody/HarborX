@@ -1053,6 +1053,23 @@ func NewRouter(deps Dependencies) http.Handler {
 		writeJSON(w, http.StatusCreated, item)
 	})
 
+	mux.HandleFunc("/api/v1/agent/traffic", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeMethodNotAllowed(w, http.MethodPost)
+			return
+		}
+		var input remote.AgentTrafficSampleInput
+		if err := decodeJSON(r, &input); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		if err := deps.Remote.AgentTrafficSample(agentTokenFromRequest(r), input); err != nil {
+			writeError(w, http.StatusUnauthorized, err)
+			return
+		}
+		writeJSON(w, http.StatusCreated, map[string]any{"ok": true})
+	})
+
 	mux.HandleFunc("/api/v1/agent/tasks/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			writeMethodNotAllowed(w, http.MethodPost)
@@ -1078,6 +1095,19 @@ func NewRouter(deps Dependencies) http.Handler {
 
 	mux.HandleFunc("/api/v1/traffic/summary", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, deps.Traffic.Summary())
+	})
+
+	mux.HandleFunc("/api/v1/traffic/rollups", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writeMethodNotAllowed(w, http.MethodGet)
+			return
+		}
+		items, err := deps.Traffic.Rollups(r.URL.Query().Get("scope"), r.URL.Query().Get("scopeId"))
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, items)
 	})
 
 	mux.HandleFunc("/api/v1/traffic/samples", func(w http.ResponseWriter, r *http.Request) {

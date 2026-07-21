@@ -97,6 +97,14 @@ type CreateAgentLogInput struct {
 	Metadata map[string]any `json:"metadata"`
 }
 
+type AgentTrafficSampleInput struct {
+	SampleScope string         `json:"sampleScope"`
+	ScopeID     string         `json:"scopeId"`
+	RXBytes     int64          `json:"rxBytes"`
+	TXBytes     int64          `json:"txBytes"`
+	Rate        map[string]any `json:"rate"`
+}
+
 type AgentTaskClaim struct {
 	Server RemoteServer `json:"server"`
 	Task   *RemoteTask  `json:"task"`
@@ -117,6 +125,7 @@ type Repository interface {
 	CreateRemoteTaskLog(serverID string, taskID string, eventKind string, message string) error
 	ListAgentLogs(serverID string) ([]AgentLog, error)
 	CreateAgentLog(serverID string, input CreateAgentLogInput) (AgentLog, error)
+	CreateTrafficSampleFromAgent(sampleScope string, scopeID string, rxBytes int64, txBytes int64, rate map[string]any) error
 }
 
 type Service struct {
@@ -278,6 +287,27 @@ func (s Service) AgentLog(token string, input CreateAgentLogInput) (AgentLog, er
 		return AgentLog{}, errors.New("agent log message is required")
 	}
 	return s.repo.CreateAgentLog(server.ID, input)
+}
+
+func (s Service) AgentTrafficSample(token string, input AgentTrafficSampleInput) error {
+	server, err := s.authenticateAgent(token)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(input.SampleScope) == "" {
+		input.SampleScope = "server"
+	}
+	if strings.TrimSpace(input.ScopeID) == "" {
+		input.ScopeID = server.ID
+	}
+	if input.RXBytes < 0 || input.TXBytes < 0 {
+		return errors.New("traffic bytes cannot be negative")
+	}
+	if input.Rate == nil {
+		input.Rate = map[string]any{}
+	}
+	input.Rate["remoteServerId"] = server.ID
+	return s.repo.CreateTrafficSampleFromAgent(input.SampleScope, input.ScopeID, input.RXBytes, input.TXBytes, input.Rate)
 }
 
 func (s Service) AgentHeartbeat(token string, input AgentHeartbeatInput) (RemoteServer, error) {

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"harborx/internal/features/nodes"
+	"harborx/internal/features/ops"
 	"harborx/internal/features/rules"
 )
 
@@ -28,6 +29,7 @@ type Repository interface {
 	DeleteXRAYProfile(id string) error
 	GetXRAYProfile(id string) (Profile, error)
 	QueueXRAYApplyTask(profile Profile, config string, summary string) (string, error)
+	ListOpsResources(kind string) ([]ops.Resource, error)
 }
 
 type Service struct {
@@ -116,11 +118,13 @@ type xrayConfig struct {
 }
 
 type xrayInbound struct {
-	Tag      string         `json:"tag"`
-	Listen   string         `json:"listen"`
-	Port     int            `json:"port"`
-	Protocol string         `json:"protocol"`
-	Settings map[string]any `json:"settings"`
+	Tag            string         `json:"tag"`
+	Listen         string         `json:"listen"`
+	Port           int            `json:"port"`
+	Protocol       string         `json:"protocol"`
+	Settings       map[string]any `json:"settings"`
+	StreamSettings map[string]any `json:"streamSettings,omitempty"`
+	Sniffing       map[string]any `json:"sniffing,omitempty"`
 }
 
 type xrayOutbound struct {
@@ -153,25 +157,14 @@ func (s Service) Preview() (Preview, error) {
 	if err != nil {
 		return Preview{}, err
 	}
+	inbounds, err := s.buildInbounds()
+	if err != nil {
+		return Preview{}, err
+	}
 
 	config := xrayConfig{
-		Log: map[string]string{"loglevel": "warning"},
-		Inbounds: []xrayInbound{
-			{
-				Tag:      "socks-in",
-				Listen:   "127.0.0.1",
-				Port:     10808,
-				Protocol: "socks",
-				Settings: map[string]any{"udp": true},
-			},
-			{
-				Tag:      "http-in",
-				Listen:   "127.0.0.1",
-				Port:     10809,
-				Protocol: "http",
-				Settings: map[string]any{},
-			},
-		},
+		Log:       map[string]string{"loglevel": "warning"},
+		Inbounds:  inbounds,
 		Outbounds: buildOutbounds(nodeItems),
 		Routing: xrayRouting{
 			DomainStrategy: "IPIfNonMatch",
@@ -319,6 +312,95 @@ func (s Service) Apply(input ApplyInput) (ApplyResult, error) {
 	return result, nil
 }
 
+func (s Service) buildInbounds() ([]xrayInbound, error) {
+	inbounds := []xrayInbound{
+		{
+			Tag:      "socks-in",
+			Listen:   "127.0.0.1",
+			Port:     10808,
+			Protocol: "socks",
+			Settings: map[string]any{"udp": true},
+		},
+		{
+			Tag:      "http-in",
+			Listen:   "127.0.0.1",
+			Port:     10809,
+			Protocol: "http",
+			Settings: map[string]any{},
+		},
+	}
+	resources, err := s.repo.ListOpsResources("xray-inbound")
+	if err != nil {
+		return nil, err
+	}
+	for _, resource := range resources {
+		if !resource.Enabled {
+			continue
+		}
+		inbounds = append(inbounds, inboundFromResource(resource))
+	}
+	return inbounds, nil
+}
+
+func inboundFromResource(resource ops.Resource) xrayInbound {
+	config := resource.Config
+	protocol := stringFromMap(config, "protocol", "vless")
+	tag := stringFromMap(config, "tag", resource.Name)
+	listen := stringFromMap(config, "listen", "0.0.0.0")
+	port := intFromMap(config, "port", 443)
+	network := stringFromMap(config, "network", "tcp")
+	security := stringFromMap(config, "security", "none")
+	inbound := xrayInbound{
+		Tag:      tag,
+		Listen:   listen,
+		Port:     port,
+		Protocol: protocol,
+		Settings: inboundSettings(protocol, config),
+		StreamSettings: map[string]any{
+			"network":  network,
+			"security": security,
+		},
+		Sniffing: map[string]any{
+			"enabled":      boolFromMap(config, "sniffing", true),
+			"destOverride": []string{"http", "tls", "quic"},
+		},
+	}
+	if security == "reality" {
+		inbound.StreamSettings["realitySettings"] = map[string]any{
+			"show":        false,
+			"dest":        stringFromMap(config, "realityDest", "www.microsoft.com:443"),
+			"serverNames": stringSliceFromMap(config, "serverNames", []string{stringFromMap(config, "serverName", "www.microsoft.com")}),
+			"privateKey":  stringFromMap(config, "privateKey", ""),
+			"shortIds":    stringSliceFromMap(config, "shortIds", []string{""}),
+		}
+	}
+	if security == "tls" {
+		inbound.StreamSettings["tlsSettings"] = map[string]any{
+			"serverName":   stringFromMap(config, "serverName", ""),
+			"certificates": []map[string]any{{"certificateFile": stringFromMap(config, "certificateFile", ""), "keyFile": stringFromMap(config, "keyFile", "")}},
+		}
+	}
+	return inbound
+}
+
+func inboundSettings(protocol string, config map[string]any) map[string]any {
+	switch strings.ToLower(protocol) {
+	case "vless":
+		return map[string]any{
+			"clients":    []map[string]any{{"id": stringFromMap(config, "uuid", ""), "flow": stringFromMap(config, "flow", "xtls-rprx-vision"), "email": stringFromMap(config, "email", "")}},
+			"decryption": "none",
+		}
+	case "vmess":
+		return map[string]any{"clients": []map[string]any{{"id": stringFromMap(config, "uuid", ""), "alterId": 0, "email": stringFromMap(config, "email", "")}}}
+	case "trojan":
+		return map[string]any{"clients": []map[string]any{{"password": stringFromMap(config, "password", ""), "email": stringFromMap(config, "email", "")}}}
+	case "shadowsocks":
+		return map[string]any{"method": stringFromMap(config, "method", "2022-blake3-aes-128-gcm"), "password": stringFromMap(config, "password", "")}
+	default:
+		return cloneAnyMap(config)
+	}
+}
+
 func buildOutbounds(items []nodes.Node) []xrayOutbound {
 	outbounds := []xrayOutbound{
 		{Tag: "direct", Protocol: "freedom", Settings: map[string]any{}},
@@ -419,4 +501,68 @@ func normalizeOutbound(policy string) string {
 	default:
 		return "Proxy"
 	}
+}
+
+func stringFromMap(values map[string]any, key string, fallback string) string {
+	if value, ok := values[key].(string); ok && strings.TrimSpace(value) != "" {
+		return strings.TrimSpace(value)
+	}
+	return fallback
+}
+
+func intFromMap(values map[string]any, key string, fallback int) int {
+	switch value := values[key].(type) {
+	case int:
+		return value
+	case int64:
+		return int(value)
+	case float64:
+		return int(value)
+	default:
+		return fallback
+	}
+}
+
+func boolFromMap(values map[string]any, key string, fallback bool) bool {
+	if value, ok := values[key].(bool); ok {
+		return value
+	}
+	return fallback
+}
+
+func stringSliceFromMap(values map[string]any, key string, fallback []string) []string {
+	raw, ok := values[key]
+	if !ok {
+		return fallback
+	}
+	switch value := raw.(type) {
+	case []string:
+		return value
+	case []any:
+		var items []string
+		for _, item := range value {
+			if text, ok := item.(string); ok {
+				items = append(items, text)
+			}
+		}
+		if len(items) > 0 {
+			return items
+		}
+	case string:
+		if strings.TrimSpace(value) != "" {
+			return []string{strings.TrimSpace(value)}
+		}
+	}
+	return fallback
+}
+
+func cloneAnyMap(values map[string]any) map[string]any {
+	if len(values) == 0 {
+		return map[string]any{}
+	}
+	cloned := make(map[string]any, len(values))
+	for key, value := range values {
+		cloned[key] = value
+	}
+	return cloned
 }
