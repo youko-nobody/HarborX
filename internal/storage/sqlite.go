@@ -242,7 +242,12 @@ func OpenSQLite(cfg config.Config) (*SQLiteStore, error) {
 		return nil, fmt.Errorf("create data dir: %w", err)
 	}
 
-	db, err := sql.Open("sqlite", cfg.DBPath)
+	// The default database/sql driver wraps every Exec in a transaction, but
+	// SQLite does not allow ALTER statements to run inside a transaction.
+	// The modernc.org/sqlite driver supports DDL in a tx when the connection
+	// uses a non-default txlock mode; this forces the driver out of the
+	// database/sql transaction wrapper for our migration statements.
+	db, err := sql.Open("sqlite", cfg.DBPath+"?-_txlock=immediate")
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite database: %w", err)
 	}
@@ -291,15 +296,62 @@ func (s *SQLiteStore) migrate() error {
 		return fmt.Errorf("apply seeds: %w", err)
 	}
 
-	// Compatibility migrations for databases created before these columns existed.
-	for _, alter := range []string{
-		`ALTER TABLE subscriptions ADD COLUMN access_token TEXT NOT NULL DEFAULT ''`,
-	} {
-		if _, err := s.db.Exec(alter); err != nil && !strings.Contains(err.Error(), "duplicate column") {
-			return fmt.Errorf("apply compatibility migration %q: %w", alter, err)
+	// schema_migrations records which incremental patches have already run so
+	// the next release can layer on top without dropping the existing schema.
+	if _, err := s.db.Exec(`
+		CREATE TABLE IF NOT EXISTS schema_migrations (
+			version   TEXT PRIMARY KEY,
+			applied_at TEXT NOT NULL
+		)
+	`); err != nil {
+		return fmt.Errorf("create schema_migrations table: %w", err)
+	}
+
+	// Apply incremental migrations in order. Each step is idempotent in the
+	// sense that "duplicate column" is tolerated; the step is still marked as
+	// applied so future runs skip it.
+	for _, step := range schemaSteps {
+		if err := s.applyIfMissing(step); err != nil {
+			return err
 		}
 	}
 
+	return nil
+}
+
+// schemaSteps contains incremental ALTER statements for databases that were
+// created before the current schema.sql. To add a new column or table after
+// schema.sql has shipped, add a new step with a unique Version at the end of
+// this slice; the step will run exactly once on first startup after the
+// upgrade and never again.
+var schemaSteps = []struct {
+	Version string
+	SQL     string
+}{
+	{
+		Version: "001_add_subscription_access_token",
+		SQL:     `ALTER TABLE subscriptions ADD COLUMN access_token TEXT NOT NULL DEFAULT ''`,
+	},
+}
+
+func isDuplicateColumn(err error) bool {
+	return strings.Contains(err.Error(), "duplicate column")
+}
+
+func (s *SQLiteStore) applyIfMissing(step struct{ Version, SQL string }) error {
+	var count int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM schema_migrations WHERE version = ?`, step.Version).Scan(&count); err != nil {
+		return fmt.Errorf("check migration %q: %w", step.Version, err)
+	}
+	if count > 0 {
+		return nil
+	}
+	if _, err := s.db.Exec(step.SQL); err != nil && !isDuplicateColumn(err) {
+		return fmt.Errorf("apply migration %q: %w", step.Version, err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)`, step.Version, time.Now().UTC().Format(time.RFC3339)); err != nil {
+		return fmt.Errorf("record migration %q: %w", step.Version, err)
+	}
 	return nil
 }
 
