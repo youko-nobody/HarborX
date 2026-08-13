@@ -309,6 +309,9 @@ func NewRouter(deps Dependencies) http.Handler {
 	mux.HandleFunc("/api/v1/subscriptions", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
+			if !requireAuth(w, r, deps) {
+				return
+			}
 			items, err := deps.Subscriptions.List()
 			if err != nil {
 				writeError(w, http.StatusInternalServerError, err)
@@ -420,6 +423,13 @@ func NewRouter(deps Dependencies) http.Handler {
 		}
 		if r.Method != http.MethodGet {
 			writeMethodNotAllowed(w, http.MethodGet)
+			return
+		}
+
+		bearerToken := r.Header.Get("Authorization")
+		accessToken := r.URL.Query().Get("token")
+		if !requireAuth(w, r, deps) && !deps.Subscriptions.CanAuthenticate(parts[0], bearerToken, accessToken) {
+			writeError(w, http.StatusUnauthorized, errors.New("invalid token"))
 			return
 		}
 
@@ -829,6 +839,9 @@ func NewRouter(deps Dependencies) http.Handler {
 	mux.HandleFunc("/api/v1/xray/preview", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			writeMethodNotAllowed(w, http.MethodGet)
+			return
+		}
+		if !requireAuth(w, r, deps) {
 			return
 		}
 		preview, err := deps.Xray.Preview()
@@ -1247,6 +1260,9 @@ func NewRouter(deps Dependencies) http.Handler {
 			writeMethodNotAllowed(w, http.MethodGet)
 			return
 		}
+		if !requireAuth(w, r, deps) {
+			return
+		}
 		items, err := deps.Traffic.Rollups(r.URL.Query().Get("scope"), r.URL.Query().Get("scopeId"))
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err)
@@ -1405,7 +1421,8 @@ func NewRouter(deps Dependencies) http.Handler {
 			}
 			writeJSON(w, http.StatusOK, limitSlice(items, r.URL.Query().Get("limit")))
 		case http.MethodPost:
-			if !requireAuth(w, r, deps) {
+			opCert := requireOperator(w, r, deps)
+			if opCert.id == "" {
 				return
 			}
 			var input certificates.CreateInput
@@ -1418,6 +1435,7 @@ func NewRouter(deps Dependencies) http.Handler {
 				writeError(w, http.StatusBadRequest, err)
 				return
 			}
+			_ = deps.Audit.Record(audit.CreateEntryInput{ActorID: opCert.id, ActorUsername: opCert.username, Action: "certificate.create", ResourceType: "certificate", ResourceID: item.ID, IP: clientIP(r)})
 			writeJSON(w, http.StatusCreated, item)
 		default:
 			writeMethodNotAllowed(w, http.MethodGet, http.MethodPost)
@@ -1432,7 +1450,8 @@ func NewRouter(deps Dependencies) http.Handler {
 		}
 		switch r.Method {
 		case http.MethodPut:
-			if !requireAuth(w, r, deps) {
+			opCert := requireOperator(w, r, deps)
+			if opCert.id == "" {
 				return
 			}
 			var input certificates.CreateInput
@@ -1445,15 +1464,18 @@ func NewRouter(deps Dependencies) http.Handler {
 				writeError(w, http.StatusBadRequest, err)
 				return
 			}
+			_ = deps.Audit.Record(audit.CreateEntryInput{ActorID: opCert.id, ActorUsername: opCert.username, Action: "certificate.update", ResourceType: "certificate", ResourceID: id, IP: clientIP(r)})
 			writeJSON(w, http.StatusOK, item)
 		case http.MethodDelete:
-			if !requireAuth(w, r, deps) {
+			opCert := requireOperator(w, r, deps)
+			if opCert.id == "" {
 				return
 			}
 			if err := deps.Certificates.Delete(id); err != nil {
 				writeError(w, http.StatusBadRequest, err)
 				return
 			}
+			_ = deps.Audit.Record(audit.CreateEntryInput{ActorID: opCert.id, ActorUsername: opCert.username, Action: "certificate.delete", ResourceType: "certificate", ResourceID: id, IP: clientIP(r)})
 			w.WriteHeader(http.StatusNoContent)
 		default:
 			writeMethodNotAllowed(w, http.MethodPut, http.MethodDelete)
@@ -1714,6 +1736,9 @@ func NewRouter(deps Dependencies) http.Handler {
 			writeMethodNotAllowed(w, http.MethodGet)
 			return
 		}
+		if !requireAuth(w, r, deps) {
+			return
+		}
 		items, err := deps.System.ListSettings()
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err)
@@ -1962,6 +1987,23 @@ type operatorInfo struct {
 func authenticatedOperator(deps Dependencies, header string) operatorInfo {
 	user, err := deps.Auth.AuthenticateBearer(header)
 	if err != nil {
+		return operatorInfo{}
+	}
+	return operatorInfo{id: user.ID, username: user.Username}
+}
+
+// requireOperator is like requireAuth but additionally rejects any user whose
+// role is not "admin". Non-admin (member) users are logged in but are not
+// permitted to mutate security-sensitive resources such as certificates,
+// DNS providers, system settings, or remote servers.
+func requireOperator(w http.ResponseWriter, r *http.Request, deps Dependencies) operatorInfo {
+	if _, err := deps.Auth.AuthenticateBearer(r.Header.Get("Authorization")); err != nil {
+		writeError(w, http.StatusUnauthorized, err)
+		return operatorInfo{}
+	}
+	user, err := deps.Auth.AuthenticateBearer(r.Header.Get("Authorization"))
+	if err != nil || user.Role != "admin" {
+		writeError(w, http.StatusForbidden, errors.New("admin role required"))
 		return operatorInfo{}
 	}
 	return operatorInfo{id: user.ID, username: user.Username}

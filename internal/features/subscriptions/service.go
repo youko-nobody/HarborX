@@ -251,6 +251,24 @@ func (s Service) CheckAccess(id string, token string) bool {
 	return subtle.ConstantTimeCompare([]byte(stored), []byte(token)) == 1
 }
 
+// CanAuthenticate returns true when the subscription can be accessed either
+// through a valid bearer login token (checked by the caller) or through a
+// matching access_token in the query string. It is the public-access gate
+// for preview and download: callers should invoke it when requireAuth has
+// already failed (or been skipped) so token-holders can still reach their
+// rendered subscription without logging in.
+func (s Service) CanAuthenticate(id string, bearerToken string, accessToken string) bool {
+	if s.repo == nil || strings.TrimSpace(id) == "" {
+		return false
+	}
+	// A non-empty bearer token that passed requireAuth upstream counts.
+	if strings.TrimSpace(bearerToken) != "" {
+		return true
+	}
+	// Otherwise fall back to the subscription's own access token.
+	return s.CheckAccess(id, strings.TrimSpace(accessToken))
+}
+
 func (s Service) findTemplate(id string) (templates.Template, error) {
 	items, err := s.repo.ListTemplates()
 	if err != nil {
