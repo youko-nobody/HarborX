@@ -366,8 +366,33 @@ func applySecurityPolicy(payload map[string]any) (string, error) {
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			return output.String(), err
 		}
-		if err := os.WriteFile(path, []byte("PasswordAuthentication no\nPermitRootLogin prohibit-password\n"), 0o644); err != nil {
+		backupPath := ""
+		// Back up any pre-existing hardening file so validation failure can be
+		// rolled back and operators can diff what changed.
+		if existing, err := os.ReadFile(path); err == nil && len(existing) > 0 {
+			backupPath = path + ".bak-" + time.Now().UTC().Format("20060102150405")
+			if err := os.WriteFile(backupPath, existing, 0o644); err != nil {
+				output.WriteString("backup of " + path + " failed: " + err.Error() + "\n")
+			}
+		}
+		hardeningContent := "PasswordAuthentication no\nPermitRootLogin prohibit-password\n"
+		if err := os.WriteFile(path, []byte(hardeningContent), 0o644); err != nil {
 			return output.String(), err
+		}
+		// Validate sshd config before reloading — a bad config would lock us out.
+		testOutput, testErr := runCommand(30*time.Second, "sh", "-lc", "command -v sshd >/dev/null 2>&1 && sshd -t || true")
+		if testErr != nil || strings.Contains(strings.ToLower(testOutput), "bad configuration") {
+			if backupPath != "" {
+				_ = os.Rename(backupPath, path)
+			} else {
+				_ = os.Remove(path)
+			}
+			return output.String(), errors.New("sshd config validation failed; rollback attempted")
+		}
+		if payloadBool(payload, "dryRun", false) {
+			output.WriteString("dry-run: ssh hardening file written and validated, reload skipped\n")
+			output.WriteString("security policy evaluated\n")
+			return output.String(), nil
 		}
 		restartOutput, err := runCommand(60*time.Second, "systemctl", "reload", "sshd")
 		output.WriteString(restartOutput)

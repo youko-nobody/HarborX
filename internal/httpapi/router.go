@@ -1256,6 +1256,7 @@ func NewRouter(deps Dependencies) http.Handler {
 			if !requireAuth(w, r, deps) {
 				return
 			}
+			op := authenticatedOperator(deps, r.Header.Get("Authorization"))
 			var input ops.CreateResourceInput
 			if err := decodeJSON(r, &input); err != nil {
 				writeError(w, http.StatusBadRequest, err)
@@ -1266,6 +1267,7 @@ func NewRouter(deps Dependencies) http.Handler {
 				writeError(w, http.StatusBadRequest, err)
 				return
 			}
+			_ = deps.Audit.Record(audit.CreateEntryInput{ActorID: op.id, ActorUsername: op.username, Action: "ops.create-resource", ResourceType: "ops-resource", ResourceID: item.ID, IP: clientIP(r)})
 			writeJSON(w, http.StatusCreated, item)
 		default:
 			writeMethodNotAllowed(w, http.MethodGet, http.MethodPost)
@@ -1288,6 +1290,7 @@ func NewRouter(deps Dependencies) http.Handler {
 			if !requireAuth(w, r, deps) {
 				return
 			}
+			op := authenticatedOperator(deps, r.Header.Get("Authorization"))
 			var input ops.ExecuteInput
 			if err := decodeJSON(r, &input); err != nil {
 				writeError(w, http.StatusBadRequest, err)
@@ -1298,6 +1301,7 @@ func NewRouter(deps Dependencies) http.Handler {
 				writeError(w, http.StatusBadRequest, err)
 				return
 			}
+			_ = deps.Audit.Record(audit.CreateEntryInput{ActorID: op.id, ActorUsername: op.username, Action: "ops.execute", ResourceType: "ops-resource", ResourceID: parts[0], Detail: map[string]any{"taskKind": item.TaskKind, "dryRun": item.DryRun}, IP: clientIP(r)})
 			writeJSON(w, http.StatusCreated, item)
 			return
 		}
@@ -1311,6 +1315,7 @@ func NewRouter(deps Dependencies) http.Handler {
 			if !requireAuth(w, r, deps) {
 				return
 			}
+			op := authenticatedOperator(deps, r.Header.Get("Authorization"))
 			var input ops.CreateResourceInput
 			if err := decodeJSON(r, &input); err != nil {
 				writeError(w, http.StatusBadRequest, err)
@@ -1321,15 +1326,18 @@ func NewRouter(deps Dependencies) http.Handler {
 				writeError(w, http.StatusBadRequest, err)
 				return
 			}
+			_ = deps.Audit.Record(audit.CreateEntryInput{ActorID: op.id, ActorUsername: op.username, Action: "ops.update-resource", ResourceType: "ops-resource", ResourceID: parts[0], IP: clientIP(r)})
 			writeJSON(w, http.StatusOK, item)
 		case http.MethodDelete:
 			if !requireAuth(w, r, deps) {
 				return
 			}
+			op := authenticatedOperator(deps, r.Header.Get("Authorization"))
 			if err := deps.Ops.Delete(parts[0]); err != nil {
 				writeError(w, http.StatusBadRequest, err)
 				return
 			}
+			_ = deps.Audit.Record(audit.CreateEntryInput{ActorID: op.id, ActorUsername: op.username, Action: "ops.delete-resource", ResourceType: "ops-resource", ResourceID: parts[0], IP: clientIP(r)})
 			w.WriteHeader(http.StatusNoContent)
 		default:
 			writeMethodNotAllowed(w, http.MethodPut, http.MethodDelete)
