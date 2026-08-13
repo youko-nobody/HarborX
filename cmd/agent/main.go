@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -201,6 +202,10 @@ func runTask(cfg agentConfig, task remoteTask) (string, error) {
 		if strings.TrimSpace(command) == "" {
 			return "", errors.New("shell-script payload.command is required")
 		}
+		if !isAllowedShellCommand(command) {
+			return "", fmt.Errorf("shell-script payload.command rejected (forbidden token)")
+		}
+		log.Printf("agent shell-script executing (user-requested): %s", command)
 		return runCommand(10*time.Minute, "sh", "-lc", command)
 	default:
 		return "", fmt.Errorf("unsupported task kind: %s", task.TaskKind)
@@ -540,6 +545,36 @@ func safeFileName(value string) string {
 
 func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+}
+
+// isAllowedShellCommand is a coarse allow/guard check for commands that will
+// be executed via "sh -lc" in shell-script tasks. It blocks obviously
+// destructive or network-ejecting patterns while permitting the normal
+// operations the operator expects (systemctl, nginx, certbot, curl-based
+// installers, etc.). Prefer narrowing this list as use cases solidify.
+func isAllowedShellCommand(command string) bool {
+	// Normalise runs of whitespace to a single space so "rm -rf  /" cannot
+	// bypass the " rm -rf " substring check with doubled spaces.
+	cmd := strings.ToLower(collapseSpace(command))
+	denied := []string{
+		" rm -rf ", "rm -rf /", "rm -rf /*",
+		" | bash ", " | sh ", "| bash", "| sh",
+		"bash -i", "sh -i", "/dev/tcp/", "/dev/udp/",
+		"python3 -c", "python -c", "perl -e", "ruby -e",
+		"nc -e", "ncat -e", "mkfifo", "base64 -d |",
+	}
+	for _, d := range denied {
+		if strings.Contains(cmd, d) {
+			return false
+		}
+	}
+	return true
+}
+
+var spaceRe = regexp.MustCompile(`\s+`)
+
+func collapseSpace(s string) string {
+	return spaceRe.ReplaceAllString(strings.TrimSpace(s), " ")
 }
 
 func packageInstallCommand(packageName string) string {
