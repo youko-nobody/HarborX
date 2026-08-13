@@ -4,11 +4,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"harborx/internal/features/audit"
 	"harborx/internal/features/auth"
 	"harborx/internal/features/backups"
 	"harborx/internal/features/catalog"
@@ -34,6 +36,7 @@ type Dependencies struct {
 	Catalog       catalog.Service
 	Dashboard     dashboard.Service
 	Auth          auth.Service
+	Audit         audit.Service
 	Users         users.Service
 	Nodes         nodes.Service
 	Subscriptions subscriptions.Service
@@ -71,6 +74,27 @@ func NewRouter(deps Dependencies) http.Handler {
 		writeJSON(w, http.StatusOK, deps.Dashboard.Summary())
 	})
 
+	mux.HandleFunc("/api/v1/audit/summary", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, deps.Audit.Summary())
+	})
+
+	mux.HandleFunc("/api/v1/audit/events", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writeMethodNotAllowed(w, http.MethodGet)
+			return
+		}
+		if !requireAuth(w, r, deps) {
+			return
+		}
+		limit := 100
+		items, err := deps.Audit.List(limit)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, items)
+	})
+
 	mux.HandleFunc("/api/v1/auth/summary", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, deps.Auth.Summary())
 	})
@@ -90,6 +114,13 @@ func NewRouter(deps Dependencies) http.Handler {
 			writeError(w, http.StatusUnauthorized, err)
 			return
 		}
+		_ = deps.Audit.Record(audit.CreateEntryInput{
+			ActorID:       result.User.ID,
+			ActorUsername: result.User.Username,
+			Action:        "auth.login",
+			ResourceType:  "session",
+			IP:            clientIP(r),
+		})
 		writeJSON(w, http.StatusOK, result)
 	})
 
@@ -113,6 +144,7 @@ func NewRouter(deps Dependencies) http.Handler {
 			if !requireAuth(w, r, deps) {
 				return
 			}
+			op := authenticatedOperator(deps, r.Header.Get("Authorization"))
 			var input users.CreateInput
 			if err := decodeJSON(r, &input); err != nil {
 				writeError(w, http.StatusBadRequest, err)
@@ -123,6 +155,14 @@ func NewRouter(deps Dependencies) http.Handler {
 				writeError(w, http.StatusBadRequest, err)
 				return
 			}
+			_ = deps.Audit.Record(audit.CreateEntryInput{
+				ActorID:       op.id,
+				ActorUsername: op.username,
+				Action:        "user.create",
+				ResourceType:  "user",
+				ResourceID:    item.ID,
+				IP:            clientIP(r),
+			})
 			writeJSON(w, http.StatusCreated, item)
 		default:
 			writeMethodNotAllowed(w, http.MethodGet, http.MethodPost)
@@ -155,10 +195,12 @@ func NewRouter(deps Dependencies) http.Handler {
 			if !requireAuth(w, r, deps) {
 				return
 			}
+			op := authenticatedOperator(deps, r.Header.Get("Authorization"))
 			if err := deps.Users.Delete(id); err != nil {
 				writeError(w, http.StatusBadRequest, err)
 				return
 			}
+			_ = deps.Audit.Record(audit.CreateEntryInput{ActorID: op.id, ActorUsername: op.username, Action: "user.delete", ResourceType: "user", ResourceID: id, IP: clientIP(r)})
 			w.WriteHeader(http.StatusNoContent)
 		default:
 			writeMethodNotAllowed(w, http.MethodPut, http.MethodDelete)
@@ -182,6 +224,7 @@ func NewRouter(deps Dependencies) http.Handler {
 			if !requireAuth(w, r, deps) {
 				return
 			}
+			op := authenticatedOperator(deps, r.Header.Get("Authorization"))
 			var input nodes.CreateInput
 			if err := decodeJSON(r, &input); err != nil {
 				writeError(w, http.StatusBadRequest, err)
@@ -192,6 +235,7 @@ func NewRouter(deps Dependencies) http.Handler {
 				writeError(w, http.StatusBadRequest, err)
 				return
 			}
+			_ = deps.Audit.Record(audit.CreateEntryInput{ActorID: op.id, ActorUsername: op.username, Action: "node.create", ResourceType: "node", ResourceID: item.ID, IP: clientIP(r)})
 			writeJSON(w, http.StatusCreated, item)
 		default:
 			writeMethodNotAllowed(w, http.MethodGet, http.MethodPost)
@@ -245,10 +289,12 @@ func NewRouter(deps Dependencies) http.Handler {
 			if !requireAuth(w, r, deps) {
 				return
 			}
+			op := authenticatedOperator(deps, r.Header.Get("Authorization"))
 			if err := deps.Nodes.Delete(id); err != nil {
 				writeError(w, http.StatusBadRequest, err)
 				return
 			}
+			_ = deps.Audit.Record(audit.CreateEntryInput{ActorID: op.id, ActorUsername: op.username, Action: "node.delete", ResourceType: "node", ResourceID: id, IP: clientIP(r)})
 			w.WriteHeader(http.StatusNoContent)
 		default:
 			writeMethodNotAllowed(w, http.MethodPut, http.MethodDelete)
@@ -272,6 +318,7 @@ func NewRouter(deps Dependencies) http.Handler {
 			if !requireAuth(w, r, deps) {
 				return
 			}
+			op := authenticatedOperator(deps, r.Header.Get("Authorization"))
 			var input subscriptions.CreateInput
 			if err := decodeJSON(r, &input); err != nil {
 				writeError(w, http.StatusBadRequest, err)
@@ -282,6 +329,14 @@ func NewRouter(deps Dependencies) http.Handler {
 				writeError(w, http.StatusBadRequest, err)
 				return
 			}
+			_ = deps.Audit.Record(audit.CreateEntryInput{
+				ActorID:       op.id,
+				ActorUsername: op.username,
+				Action:        "subscription.create",
+				ResourceType:  "subscription",
+				ResourceID:    item.ID,
+				IP:            clientIP(r),
+			})
 			writeJSON(w, http.StatusCreated, item)
 		default:
 			writeMethodNotAllowed(w, http.MethodGet, http.MethodPost)
@@ -317,10 +372,12 @@ func NewRouter(deps Dependencies) http.Handler {
 				if !requireAuth(w, r, deps) {
 					return
 				}
+				op := authenticatedOperator(deps, r.Header.Get("Authorization"))
 				if err := deps.Subscriptions.Delete(parts[0]); err != nil {
 					writeError(w, http.StatusBadRequest, err)
 					return
 				}
+				_ = deps.Audit.Record(audit.CreateEntryInput{ActorID: op.id, ActorUsername: op.username, Action: "subscription.delete", ResourceType: "subscription", ResourceID: parts[0], IP: clientIP(r)})
 				w.WriteHeader(http.StatusNoContent)
 			default:
 				writeMethodNotAllowed(w, http.MethodPut, http.MethodDelete)
@@ -330,6 +387,32 @@ func NewRouter(deps Dependencies) http.Handler {
 
 		if len(parts) != 2 {
 			writeError(w, http.StatusBadRequest, errors.New("subscription action path must be /api/v1/subscriptions/{id}/preview or /download"))
+			return
+		}
+
+		if parts[1] == "token-rotate" {
+			if r.Method != http.MethodPost {
+				writeMethodNotAllowed(w, http.MethodPost)
+				return
+			}
+			if !requireAuth(w, r, deps) {
+				return
+			}
+			op := authenticatedOperator(deps, r.Header.Get("Authorization"))
+			rotated, err := deps.Subscriptions.RotateAccessToken(parts[0])
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			_ = deps.Audit.Record(audit.CreateEntryInput{
+				ActorID:       op.id,
+				ActorUsername: op.username,
+				Action:        "subscription.rotate-token",
+				ResourceType:  "subscription",
+				ResourceID:    parts[0],
+				IP:            clientIP(r),
+			})
+			writeJSON(w, http.StatusOK, rotated)
 			return
 		}
 		if r.Method != http.MethodGet {
@@ -758,6 +841,19 @@ func NewRouter(deps Dependencies) http.Handler {
 	mux.HandleFunc("/api/v1/xray/snapshots/", func(w http.ResponseWriter, r *http.Request) {
 		path := strings.TrimPrefix(r.URL.Path, "/api/v1/xray/snapshots/")
 		parts := strings.Split(strings.Trim(path, "/"), "/")
+		if len(parts) == 0 || parts[0] == "" {
+			writeError(w, http.StatusBadRequest, errors.New("xray snapshot id is required"))
+			return
+		}
+		// Restrict snapshot ids to the characters used by our UUIDs. Reject any
+		// other characters (notably "../") so a crafted id cannot be interpreted
+		// as a relative path by the storage layer.
+		for _, c := range parts[0] {
+			if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || c == '-') {
+				writeError(w, http.StatusBadRequest, errors.New("xray snapshot id is required"))
+				return
+			}
+		}
 		if len(parts) == 2 && parts[1] == "restore" {
 			if r.Method != http.MethodPost {
 				writeMethodNotAllowed(w, http.MethodPost)
@@ -827,11 +923,13 @@ func NewRouter(deps Dependencies) http.Handler {
 				return
 			}
 			input.ProfileID = parts[0]
+			op := authenticatedOperator(deps, r.Header.Get("Authorization"))
 			item, err := deps.Xray.Apply(input)
 			if err != nil {
 				writeError(w, http.StatusBadRequest, err)
 				return
 			}
+			_ = deps.Audit.Record(audit.CreateEntryInput{ActorID: op.id, ActorUsername: op.username, Action: "xray.apply-profile", ResourceType: "xray-profile", ResourceID: parts[0], IP: clientIP(r)})
 			writeJSON(w, http.StatusCreated, item)
 			return
 		}
@@ -887,6 +985,7 @@ func NewRouter(deps Dependencies) http.Handler {
 			if !requireAuth(w, r, deps) {
 				return
 			}
+			op := authenticatedOperator(deps, r.Header.Get("Authorization"))
 			var input remote.CreateServerInput
 			if err := decodeJSON(r, &input); err != nil {
 				writeError(w, http.StatusBadRequest, err)
@@ -897,6 +996,7 @@ func NewRouter(deps Dependencies) http.Handler {
 				writeError(w, http.StatusBadRequest, err)
 				return
 			}
+			_ = deps.Audit.Record(audit.CreateEntryInput{ActorID: op.id, ActorUsername: op.username, Action: "remote.create-server", ResourceType: "remote-server", ResourceID: enrollment.Server.ID, IP: clientIP(r)})
 			writeJSON(w, http.StatusCreated, enrollment)
 		default:
 			writeMethodNotAllowed(w, http.MethodGet, http.MethodPost)
@@ -1561,7 +1661,7 @@ func NewRouter(deps Dependencies) http.Handler {
 
 	mux.HandleFunc("/api/v1/system/settings/", func(w http.ResponseWriter, r *http.Request) {
 		key := strings.TrimPrefix(r.URL.Path, "/api/v1/system/settings/")
-		if key == "" {
+		if key == "" || strings.ContainsRune(key, '/') {
 			writeError(w, http.StatusBadRequest, errors.New("system setting key is required"))
 			return
 		}
@@ -1644,9 +1744,29 @@ func directoryExists(path string) bool {
 }
 
 func withCORS(next http.Handler) http.Handler {
+	// Optional origin allow-list via HARBORX_CORS_ORIGINS (comma-separated).
+	// When unset, the behaviour is permissive (accept any origin) to preserve
+	// compatibility with existing self-hosted deployments. Set this in
+	// production to restrict cross-origin access.
+	allowedOrigins := []string{}
+	if raw := os.Getenv("HARBORX_CORS_ORIGINS"); raw != "" {
+		for _, part := range strings.Split(raw, ",") {
+			trimmed := strings.TrimSpace(part)
+			if trimmed != "" {
+				allowedOrigins = append(allowedOrigins, trimmed)
+			}
+		}
+	}
+	allowAll := len(allowedOrigins) == 0
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		origin := r.Header.Get("Origin")
+		if allowAll {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+		} else if origin != "" && contains(allowedOrigins, origin) {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
+		}
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-HarborX-Agent-Token")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
@@ -1654,6 +1774,15 @@ func withCORS(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func contains(items []string, value string) bool {
+	for _, item := range items {
+		if item == value {
+			return true
+		}
+	}
+	return false
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {
@@ -1664,13 +1793,57 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 
 func writeError(w http.ResponseWriter, status int, err error) {
 	writeJSON(w, status, map[string]any{
-		"error": err.Error(),
+		"error": sanitizeError(err.Error()),
 	})
+}
+
+// sanitizeError redacts internal details from error messages before they
+// reach the HTTP response. Database engines, the filesystem, and the Xray
+// core tend to include paths, table names, and SQL in their error strings;
+// echoing those back lets an attacker fingerprint the deployment.
+func sanitizeError(msg string) string {
+	lower := strings.ToLower(msg)
+	redactSignals := []string{
+		"database", "sqlite", "locked", "primary key", "foreign key",
+		"violates", "constraint", "index", "table ", "no such",
+		"no such file", "permission denied", "open ", "read ",
+	}
+	for _, signal := range redactSignals {
+		if strings.Contains(lower, signal) {
+			switch statusFromMessage(lower) {
+			case http.StatusConflict:
+				return "resource conflict"
+			default:
+				return "internal error"
+			}
+		}
+	}
+	return msg
+}
+
+func statusFromMessage(lower string) int {
+	if strings.Contains(lower, "conflict") ||
+		strings.Contains(lower, "primary key") ||
+		strings.Contains(lower, "unique") ||
+		strings.Contains(lower, "violates") ||
+		strings.Contains(lower, "duplicate") {
+		return http.StatusConflict
+	}
+	return 0
 }
 
 func decodeJSON(r *http.Request, target any) error {
 	defer r.Body.Close()
-	decoder := json.NewDecoder(r.Body)
+	// Cap the request body so a single malformed or oversized payload cannot
+	// exhaust process memory. Most real payloads are well under 1 KiB.
+	body, err := io.ReadAll(io.LimitReader(r.Body, 4<<20))
+	if err != nil {
+		return err
+	}
+	if len(body) > 4<<20 {
+		return errors.New("request body is too large")
+	}
+	decoder := json.NewDecoder(strings.NewReader(string(body)))
 	decoder.DisallowUnknownFields()
 	return decoder.Decode(target)
 }
@@ -1686,6 +1859,19 @@ func requireAuth(w http.ResponseWriter, r *http.Request, deps Dependencies) bool
 		return false
 	}
 	return true
+}
+
+type operatorInfo struct {
+	id       string
+	username string
+}
+
+func authenticatedOperator(deps Dependencies, header string) operatorInfo {
+	user, err := deps.Auth.AuthenticateBearer(header)
+	if err != nil {
+		return operatorInfo{}
+	}
+	return operatorInfo{id: user.ID, username: user.Username}
 }
 
 func agentTokenFromRequest(r *http.Request) string {

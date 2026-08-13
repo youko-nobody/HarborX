@@ -425,10 +425,42 @@ export function login(input: { username: string; password: string }) {
 }
 
 export async function loadWorkspace(): Promise<AppBootstrap> {
+  // 未登录时只拉取公开端点（登录页/只读概览需要），
+  // 敏感数据（节点、订阅、Xray、系统设置等）仅在登录后拉取。
+  const [modules, dashboard, rules] = await Promise.all([
+    fetchJSON<ModuleCard[]>("/api/v1/catalog/modules"),
+    fetchJSON<DashboardSummary>("/api/v1/dashboard/summary"),
+    fetchJSON<RulesBootstrap>("/api/v1/rules/bootstrap"),
+  ]);
+
+  if (!authToken) {
+    return {
+      modules,
+      dashboard,
+      rules,
+      templates: [],
+      nodes: [],
+      ruleSets: [],
+      subscriptions: [],
+      packages: [],
+      entitlements: [],
+      remoteServers: [],
+      proxyGroups: [],
+      dnsProviders: [],
+      certificates: [],
+      notificationChannels: [],
+      backups: [],
+      systemSettings: [],
+      trafficSamples: [],
+      trafficRollups: [],
+      opsResources: [],
+      xraySnapshots: [],
+      xrayProfiles: [],
+      users: [],
+    };
+  }
+
   const [
-    modules,
-    dashboard,
-    rules,
     templates,
     nodes,
     ruleSets,
@@ -447,10 +479,8 @@ export async function loadWorkspace(): Promise<AppBootstrap> {
     opsResources,
     xraySnapshots,
     xrayProfiles,
+    users,
   ] = await Promise.all([
-    fetchJSON<ModuleCard[]>("/api/v1/catalog/modules"),
-    fetchJSON<DashboardSummary>("/api/v1/dashboard/summary"),
-    fetchJSON<RulesBootstrap>("/api/v1/rules/bootstrap"),
     fetchJSON<TemplateRecord[]>("/api/v1/templates"),
     fetchJSON<NodeRecord[]>("/api/v1/nodes"),
     fetchJSON<RuleSetRecord[]>("/api/v1/rulesets"),
@@ -469,8 +499,8 @@ export async function loadWorkspace(): Promise<AppBootstrap> {
     fetchJSON<OpsResourceRecord[]>("/api/v1/ops/resources"),
     fetchJSON<XraySnapshotRecord[]>("/api/v1/xray/snapshots"),
     fetchJSON<XrayProfileRecord[]>("/api/v1/xray/profiles"),
+    fetchJSON<UserRecord[]>("/api/v1/users"),
   ]);
-  const users = authToken ? await fetchJSON<UserRecord[]>("/api/v1/users") : [];
 
   return {
     modules,
@@ -995,7 +1025,33 @@ export function updateUser(
 }
 
 export function deleteUser(id: string) {
-  return fetchJSON<void>(`/api/v1/users/${id}`, {
-    method: "DELETE",
-  });
+	return fetchJSON<void>(`/api/v1/users/${id}`, {
+		method: "DELETE",
+	});
+}
+
+export function rotateSubscriptionToken(id: string) {
+	return fetchJSON<{ subscriptionId: string; accessToken: string; rotatedAt: string }>(
+		`/api/v1/subscriptions/${id}/token-rotate`,
+		{
+			method: "POST",
+			body: JSON.stringify({}),
+		},
+	);
+}
+
+export function listAuditEvents() {
+	return fetchJSON<
+		Array<{
+			id: string;
+			actorId: string;
+			actorUsername: string;
+			action: string;
+			resourceType: string;
+			resourceId: string;
+			detail?: Record<string, unknown>;
+			ip: string;
+			createdAt: string;
+		}>
+	>("/api/v1/audit/events");
 }

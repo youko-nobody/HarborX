@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"harborx/internal/config"
+	"harborx/internal/features/audit"
 	"harborx/internal/features/auth"
 	"harborx/internal/features/backups"
 	"harborx/internal/features/catalog"
@@ -58,11 +59,17 @@ func New() (App, error) {
 	packagesService := packages.NewService(store)
 	backupsService := backups.NewService(store, cfg.DataDir)
 	systemService := system.NewService(store)
+	auditService := audit.NewService(store)
+	// Prune audit entries older than the configured retention window on
+	// startup. Best-effort: an error here must not prevent the control
+	// plane from starting.
+	discardIntError(auditService.Prune)
 
 	router := httpapi.NewRouter(httpapi.Dependencies{
 		Catalog:       catalogService,
 		Dashboard:     dashboardService,
 		Auth:          authService,
+		Audit:         auditService,
 		Users:         usersService,
 		Nodes:         nodesService,
 		Subscriptions: subscriptionsService,
@@ -86,4 +93,8 @@ func New() (App, error) {
 		Config: cfg,
 		Router: router,
 	}, nil
+}
+
+func discardIntError(f func() (int64, error)) {
+	_, _ = f()
 }

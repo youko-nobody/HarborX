@@ -1,8 +1,10 @@
 package storage
 
 import (
+	"crypto/rand"
 	"database/sql"
 	"embed"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,9 +13,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	_ "modernc.org/sqlite"
 
 	"harborx/internal/config"
+	"harborx/internal/features/audit"
 	"harborx/internal/features/auth"
 	"harborx/internal/features/backups"
 	"harborx/internal/features/certificates"
@@ -183,6 +187,34 @@ func (s *SQLiteStore) CreateAPIToken(userID string, name string, tokenHash strin
 	return err
 }
 
+// DeleteAPITokensBefore prunes an operator's old web sessions so the account
+// cannot accumulate an unbounded number of active tokens. It keeps the most
+// recent maxSessions tokens and deletes everything older than cutoff among
+// the surplus. Cutoff is always honoured; maxSessions trims recent tokens
+// above the cap.
+func (s *SQLiteStore) DeleteAPITokensBefore(userID string, cutoff time.Time, maxSessions int) error {
+	if strings.TrimSpace(userID) == "" {
+		return errors.New("user id is required")
+	}
+	if maxSessions <= 0 {
+		maxSessions = 10
+	}
+	cutoffStr := cutoff.UTC().Format(time.RFC3339)
+	_, err := s.db.Exec(`
+		DELETE FROM api_tokens
+		WHERE user_id = ?
+		  AND name = 'web-session'
+		  AND id NOT IN (
+				SELECT id FROM api_tokens
+				WHERE user_id = ? AND name = 'web-session'
+				ORDER BY created_at DESC
+				LIMIT ?
+		  )
+		  AND created_at < ?
+	`, userID, userID, maxSessions, cutoffStr)
+	return err
+}
+
 func (s *SQLiteStore) FindAPITokenByHash(tokenHash string) (auth.User, error) {
 	var user auth.User
 	err := s.db.QueryRow(`
@@ -220,6 +252,19 @@ func OpenSQLite(cfg config.Config) (*SQLiteStore, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("enable foreign keys: %w", err)
 	}
+	// WAL mode + busy timeout eliminate the "database locked" errors that
+	// appear when a write overlaps another operation under concurrent HTTP
+	// requests. WAL keeps readers unblocked while a writer holds the lock.
+	for _, pragma := range []string{
+		`PRAGMA journal_mode = WAL`,
+		`PRAGMA busy_timeout = 5000`,
+		`PRAGMA synchronous = NORMAL`,
+	} {
+		if _, err := store.db.Exec(pragma); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("apply pragma %q: %w", pragma, err)
+		}
+	}
 	if err := store.migrate(); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -244,6 +289,15 @@ func (s *SQLiteStore) migrate() error {
 	}
 	if _, err := s.db.Exec(string(seedsSQL)); err != nil {
 		return fmt.Errorf("apply seeds: %w", err)
+	}
+
+	// Compatibility migrations for databases created before these columns existed.
+	for _, alter := range []string{
+		`ALTER TABLE subscriptions ADD COLUMN access_token TEXT NOT NULL DEFAULT ''`,
+	} {
+		if _, err := s.db.Exec(alter); err != nil && !strings.Contains(err.Error(), "duplicate column") {
+			return fmt.Errorf("apply compatibility migration %q: %w", alter, err)
+		}
 	}
 
 	return nil
@@ -835,7 +889,7 @@ func (s *SQLiteStore) templateLocked(id string) (bool, error) {
 
 func (s *SQLiteStore) ListSubscriptions() ([]subscriptions.Subscription, error) {
 	rows, err := s.db.Query(`
-		SELECT id, name, owner_user_id, output_format, template_id, source_json, options_json, created_at, updated_at
+		SELECT id, name, owner_user_id, output_format, template_id, source_json, options_json, access_token, created_at, updated_at
 		FROM subscriptions
 		ORDER BY created_at DESC
 	`)
@@ -857,6 +911,7 @@ func (s *SQLiteStore) ListSubscriptions() ([]subscriptions.Subscription, error) 
 			&item.TemplateID,
 			&sourceJSON,
 			&optionsJSON,
+			&item.AccessToken,
 			&item.CreatedAt,
 			&item.UpdatedAt,
 		); err != nil {
@@ -884,6 +939,10 @@ func (s *SQLiteStore) CreateSubscription(input subscriptions.CreateInput) (subsc
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
+	accessToken, err := newAccessToken()
+	if err != nil {
+		return subscriptions.Subscription{}, err
+	}
 	item := subscriptions.Subscription{
 		ID:           newID("subscription"),
 		Name:         strings.TrimSpace(input.Name),
@@ -892,13 +951,14 @@ func (s *SQLiteStore) CreateSubscription(input subscriptions.CreateInput) (subsc
 		TemplateID:   input.TemplateID,
 		Sources:      cloneStringSlice(input.Sources),
 		Options:      cloneMap(input.Options),
+		AccessToken:  accessToken,
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
 
-	_, err := s.db.Exec(`
-		INSERT INTO subscriptions (id, name, owner_user_id, output_format, template_id, source_json, options_json, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	_, err = s.db.Exec(`
+		INSERT INTO subscriptions (id, name, owner_user_id, output_format, template_id, source_json, options_json, access_token, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		item.ID,
 		item.Name,
@@ -907,6 +967,7 @@ func (s *SQLiteStore) CreateSubscription(input subscriptions.CreateInput) (subsc
 		item.TemplateID,
 		encodeJSON(item.Sources),
 		encodeJSON(item.Options),
+		item.AccessToken,
 		item.CreatedAt,
 		item.UpdatedAt,
 	)
@@ -915,6 +976,21 @@ func (s *SQLiteStore) CreateSubscription(input subscriptions.CreateInput) (subsc
 	}
 
 	return item, nil
+}
+
+func (s *SQLiteStore) GetSubscriptionAccessToken(id string) (string, error) {
+	if strings.TrimSpace(id) == "" {
+		return "", errors.New("subscription id is required")
+	}
+	var token string
+	err := s.db.QueryRow(`SELECT access_token FROM subscriptions WHERE id = ?`, id).Scan(&token)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", errors.New("subscription not found")
+		}
+		return "", err
+	}
+	return token, nil
 }
 
 func (s *SQLiteStore) UpdateSubscription(id string, input subscriptions.CreateInput) (subscriptions.Subscription, error) {
@@ -968,6 +1044,36 @@ func (s *SQLiteStore) DeleteSubscription(id string) error {
 		return errors.New("subscription not found")
 	}
 	return nil
+}
+
+// RotateSubscriptionAccessToken atomically issues a fresh client download
+// token. The old token is invalidated at the same instant, which prevents a
+// race in which the operator could read a leaked token and decide whether to
+// keep it valid. The plain-text token is returned once so the caller can show
+// it; it is never stored.
+func (s *SQLiteStore) RotateSubscriptionAccessToken(id string) (string, error) {
+	if strings.TrimSpace(id) == "" {
+		return "", errors.New("subscription id is required")
+	}
+	accessToken, err := newAccessToken()
+	if err != nil {
+		return "", err
+	}
+	result, err := s.db.Exec(
+		`UPDATE subscriptions SET access_token = ?, updated_at = ? WHERE id = ?`,
+		accessToken, time.Now().UTC().Format(time.RFC3339), id,
+	)
+	if err != nil {
+		return "", err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return "", err
+	}
+	if rows == 0 {
+		return "", errors.New("subscription not found")
+	}
+	return accessToken, nil
 }
 
 func (s *SQLiteStore) findSubscriptionRecord(id string) (subscriptions.Subscription, error) {
@@ -2614,7 +2720,82 @@ func scanOpsResource(scanner opsResourceScanner) (ops.Resource, error) {
 }
 
 func newID(prefix string) string {
-	return fmt.Sprintf("%s-%d", prefix, time.Now().UTC().UnixNano())
+	// UUID-based ids avoid collisions under concurrent inserts. Timestamp-only
+	// ids can collide within the same nanosecond, which causes primary-key
+	// violations and silently dropped rows.
+	return fmt.Sprintf("%s-%s", prefix, uuid.NewString())
+}
+
+// newAccessToken returns a cryptographically random opaque token used to
+// authorize client-side subscription downloads.
+func newAccessToken() (string, error) {
+	raw := make([]byte, 24)
+	if _, err := rand.Read(raw); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(raw), nil
+}
+
+func (s *SQLiteStore) CreateAuditEntry(entry audit.Entry) error {
+	_, err := s.db.Exec(`
+		INSERT INTO audit_logs (id, actor_id, actor_username, action, resource_type, resource_id, detail_json, ip, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`,
+		entry.ID,
+		entry.ActorID,
+		entry.ActorUsername,
+		entry.Action,
+		entry.ResourceType,
+		entry.ResourceID,
+		encodeJSON(entry.Detail),
+		entry.IP,
+		entry.CreatedAt,
+	)
+	return err
+}
+
+func (s *SQLiteStore) ListAuditEntries(limit int) ([]audit.Entry, error) {
+	rows, err := s.db.Query(`
+		SELECT id, actor_id, actor_username, action, resource_type, resource_id, detail_json, ip, created_at
+		FROM audit_logs
+		ORDER BY created_at DESC
+		LIMIT ?
+	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var items []audit.Entry
+	for rows.Next() {
+		var item audit.Entry
+		var detailJSON string
+		if err := rows.Scan(
+			&item.ID,
+			&item.ActorID,
+			&item.ActorUsername,
+			&item.Action,
+			&item.ResourceType,
+			&item.ResourceID,
+			&detailJSON,
+			&item.IP,
+			&item.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		item.Detail = decodeMap(detailJSON)
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *SQLiteStore) DeleteAuditEntriesBefore(cutoff time.Time) (int64, error) {
+	cutoffStr := cutoff.UTC().Format(time.RFC3339)
+	result, err := s.db.Exec(`DELETE FROM audit_logs WHERE created_at < ?`, cutoffStr)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 func boolToInt(value bool) int {
