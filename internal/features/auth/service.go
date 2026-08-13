@@ -45,6 +45,7 @@ type Repository interface {
 	GetUserByUsername(username string) (User, error)
 	UpdateUserPasswordHash(userID string, passwordHash string) error
 	CreateAPIToken(userID string, name string, tokenHash string) error
+	DeleteAPITokensBefore(userID string, cutoff time.Time, maxSessions int) error
 	FindAPITokenByHash(tokenHash string) (User, error)
 }
 
@@ -62,7 +63,7 @@ func (Service) Summary() Summary {
 	return Summary{
 		LoginModes:        []string{"password", "api-token"},
 		SessionStore:      "sqlite",
-		SupportsTOTP:      true,
+		SupportsTOTP:      false,
 		SupportsAPITokens: true,
 	}
 }
@@ -89,6 +90,11 @@ func (s Service) Login(input LoginInput) (LoginResponse, error) {
 	if err := s.repo.CreateAPIToken(user.ID, "web-session", tokenHash); err != nil {
 		return LoginResponse{}, err
 	}
+	// Prevent a single account from accumulating an unbounded number of
+	// session tokens. Keep the most recent maxSessions; anything older than
+	// the session window is pruned after each successful login. Best-effort:
+	// a pruning failure must not block the operator from logging in.
+	_ = s.repo.DeleteAPITokensBefore(user.ID, time.Now().UTC().Add(-30*24*time.Hour), 10)
 
 	user.PasswordHash = ""
 	return LoginResponse{Token: token, User: user}, nil
@@ -106,7 +112,14 @@ func (s Service) AuthenticateBearer(header string) (User, error) {
 	if token == "" {
 		return User{}, errors.New("missing bearer token")
 	}
-	return s.repo.FindAPITokenByHash(HashToken(token))
+	user, err := s.repo.FindAPITokenByHash(HashToken(token))
+	if err != nil {
+		return User{}, err
+	}
+	// Never leak the stored password hash through the API surface,
+	// regardless of repository implementation.
+	user.PasswordHash = ""
+	return user, nil
 }
 
 func (s Service) ensureAdminPassword() {

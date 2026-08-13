@@ -2,11 +2,13 @@ package subscriptions
 
 import (
 	"bytes"
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"sort"
 	"strings"
 	"text/template"
+	"time"
 
 	"harborx/internal/features/nodes"
 	"harborx/internal/features/rules"
@@ -21,6 +23,7 @@ type Subscription struct {
 	TemplateID   string         `json:"templateId"`
 	Sources      []string       `json:"sources"`
 	Options      map[string]any `json:"options"`
+	AccessToken  string         `json:"accessToken"`
 	CreatedAt    string         `json:"createdAt"`
 	UpdatedAt    string         `json:"updatedAt"`
 }
@@ -44,6 +47,8 @@ type Repository interface {
 	CreateSubscription(input CreateInput) (Subscription, error)
 	UpdateSubscription(id string, input CreateInput) (Subscription, error)
 	DeleteSubscription(id string) error
+	RotateSubscriptionAccessToken(id string) (string, error)
+	GetSubscriptionAccessToken(id string) (string, error)
 	ListNodes() ([]nodes.Node, error)
 	ListRuleSets() ([]rules.RuleSet, error)
 	ListTemplates() ([]templates.Template, error)
@@ -106,6 +111,34 @@ func (s Service) Delete(id string) error {
 		return errors.New("subscription id is required")
 	}
 	return s.repo.DeleteSubscription(id)
+}
+
+// RotateAccessToken issues a fresh client download token for a subscription.
+// The returned plain-text token is shown once to the operator; the persisted
+// copy is the only one that authorises subsequent client downloads, so the
+// old token is effectively revoked at rotation time.
+type RotatedSubscriptionToken struct {
+	SubscriptionID string `json:"subscriptionId"`
+	AccessToken    string `json:"accessToken"`
+	RotatedAt      string `json:"rotatedAt"`
+}
+
+func (s Service) RotateAccessToken(id string) (RotatedSubscriptionToken, error) {
+	if s.repo == nil {
+		return RotatedSubscriptionToken{}, errors.New("subscriptions repository is not configured")
+	}
+	if strings.TrimSpace(id) == "" {
+		return RotatedSubscriptionToken{}, errors.New("subscription id is required")
+	}
+	accessToken, err := s.repo.RotateSubscriptionAccessToken(id)
+	if err != nil {
+		return RotatedSubscriptionToken{}, err
+	}
+	return RotatedSubscriptionToken{
+		SubscriptionID: id,
+		AccessToken:    accessToken,
+		RotatedAt:      time.Now().UTC().Format(time.RFC3339),
+	}, nil
 }
 
 type RenderedSubscription struct {
@@ -201,6 +234,21 @@ func (s Service) findSubscription(id string) (Subscription, error) {
 		}
 	}
 	return Subscription{}, errors.New("subscription not found")
+}
+
+// CheckAccess verifies a subscription access token without rendering the
+// subscription. It returns true when the token matches the stored token.
+// An empty stored token (legacy row) denies access so that a leaked or
+// guessed subscription id cannot expose node configuration.
+func (s Service) CheckAccess(id string, token string) bool {
+	if s.repo == nil || strings.TrimSpace(id) == "" || strings.TrimSpace(token) == "" {
+		return false
+	}
+	stored, err := s.repo.GetSubscriptionAccessToken(id)
+	if err != nil || strings.TrimSpace(stored) == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(stored), []byte(token)) == 1
 }
 
 func (s Service) findTemplate(id string) (templates.Template, error) {

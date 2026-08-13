@@ -100,30 +100,37 @@ func parseShadowsocks(token string, sourceKind string, tags []string) (CreateInp
 		return CreateInput{}, err
 	}
 	name := strings.TrimSpace(parsed.Fragment)
+
+	// Legacy format: ss://base64(method:password@host:port)[#remark]
+	// The whole payload is a single base64 blob; url.Parse would otherwise
+	// misread it as a bare host and lose the port.
+	withoutScheme := strings.TrimPrefix(token, "ss://")
+	mainPart := strings.SplitN(withoutScheme, "#", 2)[0]
+	if decoded, err := decodeBase64(mainPart); err == nil {
+		plain := string(decoded)
+		if at := strings.LastIndex(plain, "@"); at >= 0 {
+			methodAndPassword := plain[:at]
+			hostPart := plain[at+1:]
+			splitHost, splitPort, splitErr := net.SplitHostPort(hostPart)
+			portInt, _ := strconv.Atoi(splitPort)
+			if splitErr == nil && splitHost != "" && portInt > 0 {
+				if name == "" {
+					name = splitHost
+				}
+				return createImportedNode(name, sourceKind, "shadowsocks", splitHost, portInt, tags, map[string]any{
+					"methodAndPassword": methodAndPassword,
+					"rawURL":            token,
+				})
+			}
+		}
+	}
+
+	// URL format: ss://base64(method:password)@host:port#remark
 	host := parsed.Hostname()
 	port, _ := strconv.Atoi(parsed.Port())
 	methodAndPassword := parsed.User.String()
-	if host == "" {
-		withoutScheme := strings.TrimPrefix(token, "ss://")
-		mainPart := strings.SplitN(withoutScheme, "#", 2)[0]
-		decoded, err := decodeBase64(mainPart)
-		if err == nil {
-			methodAndHost := string(decoded)
-			if at := strings.LastIndex(methodAndHost, "@"); at >= 0 {
-				methodAndPassword = methodAndHost[:at]
-				hostPart := methodAndHost[at+1:]
-				splitHost, splitPort, _ := net.SplitHostPort(hostPart)
-				portInt, _ := strconv.Atoi(splitPort)
-				if portInt > 0 {
-					host = splitHost
-					metadata := map[string]any{"methodAndPassword": methodAndPassword, "rawURL": token}
-					if name == "" {
-						name = host
-					}
-					return createImportedNode(name, sourceKind, "shadowsocks", host, portInt, tags, metadata)
-				}
-			}
-		}
+	if decoded, err := decodeBase64(methodAndPassword); err == nil {
+		methodAndPassword = string(decoded)
 	}
 	if name == "" {
 		name = host

@@ -91,11 +91,14 @@ func (s Service) Update(id string, input UpdateInput) (User, error) {
 	if strings.TrimSpace(id) == "" {
 		return User{}, errors.New("user id is required")
 	}
-	if input.Role == "" {
-		input.Role = "member"
+	// Require role and status to be explicit. Refuse to silently default them
+	// so an update that only changes the password cannot accidentally
+	// downgrade an admin to "member" or re-enable a disabled account.
+	if strings.TrimSpace(input.Role) == "" {
+		return User{}, errors.New("user role is required")
 	}
-	if input.Status == "" {
-		input.Status = "active"
+	if strings.TrimSpace(input.Status) == "" {
+		return User{}, errors.New("user status is required")
 	}
 	if !supportedRole(input.Role) {
 		return User{}, errors.New("unsupported user role")
@@ -134,8 +137,11 @@ func validateCreate(input CreateInput) error {
 	if strings.TrimSpace(input.Password) == "" {
 		return errors.New("password is required")
 	}
-	if input.Role == "" {
-		input.Role = "member"
+	// Require role to be explicit. Historically an empty role silently
+	// defaulted to "member", which allowed callers to downgrade a newly
+	// created admin without intending to.
+	if strings.TrimSpace(input.Role) == "" {
+		return errors.New("user role is required")
 	}
 	if !supportedRole(input.Role) {
 		return errors.New("unsupported user role")
