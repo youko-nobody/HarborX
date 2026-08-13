@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestIsAllowedShellCommand(t *testing.T) {
 	tests := []struct {
@@ -38,5 +41,57 @@ func TestShellQuoteEscapesSingleQuote(t *testing.T) {
 	want := "'it'\"'\"'s me'"
 	if got != want {
 		t.Fatalf("shellQuote = %q, want %q", got, want)
+	}
+}
+
+func TestValidateExternalURL(t *testing.T) {
+	tests := []struct {
+		in  string
+		err bool
+	}{
+		{"https://sub.example.com/list.txt", false},
+		{"http://example.org/subscription", false},
+		{"https://a.b.c/x", false},
+		{"https://sub.example.com:8080/x", false},
+		{"file:///etc/shadow", true},
+		{"ftp://example.com/x", true},
+		{"http://127.0.0.1/x", true},
+		{"http://10.0.0.1/x", true},
+		{"http://192.168.1.1/x", true},
+		{"http://169.254.169.254/latest/meta-data/", true},
+		{"http://172.16.0.5/x", true},
+		{"https://example.com@evil.com/x", true},
+		{"http://example.com/../../etc/passwd", false}, // path traversal blocked by filesystem, not by us
+		{"http://localhost/x", true},
+		{"http://evil.com/x", false}, // SSRF only blocks private/metadata IPs, not arbitrary hostnames
+		{"http://127.0.0.1.example.com/x", true},
+	}
+	for _, tt := range tests {
+		err := validateExternalURL(tt.in)
+		gotErr := err != nil
+		if gotErr != tt.err {
+			t.Fatalf("validateExternalURL(%q) err=%v (got: %v), want err=%v", tt.in, err, gotErr, tt.err)
+		}
+	}
+}
+
+func TestApplySecurityPolicyDryRunDoesNotValidateSSHD(t *testing.T) {
+	payload := map[string]any{
+		"disablePasswordSSH": true,
+		"dryRun":             true,
+	}
+	out, err := applySecurityPolicy(payload)
+	if err != nil {
+		t.Fatalf("dry-run returned error: %v", err)
+	}
+	// Dry-run must short-circuit BEFORE sshd -t runs (which would write/validate the config).
+	if strings.Contains(out, "validated") {
+		t.Fatalf("dry-run output should not contain 'validated', got: %q", out)
+	}
+	if !strings.Contains(out, "skipped") {
+		t.Fatalf("dry-run output should mention 'skipped', got: %q", out)
+	}
+	if !strings.Contains(out, "security policy evaluated") {
+		t.Fatalf("dry-run output missing 'security policy evaluated', got: %q", out)
 	}
 }

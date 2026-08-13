@@ -261,6 +261,7 @@ export function App() {
   const [auditLoading, setAuditLoading] = useState(false);
 const [rotatingSubscriptionId, setRotatingSubscriptionId] = useState<string | null>(null);
 const [rotatedToken, setRotatedToken] = useState<string | null>(null);
+	const [auditFilter, setAuditFilter] = useState("");
   const [opsResourceKind, setOpsResourceKind] = useState("xray-inbound");
   const [opsResourceName, setOpsResourceName] = useState("VLESS Reality Inbound");
   const [opsRemoteServerId, setOpsRemoteServerId] = useState("");
@@ -493,15 +494,28 @@ const [rotatedToken, setRotatedToken] = useState<string | null>(null);
   }
 
   async function handleLoadAuditEvents() {
-    setAuditLoading(true);
-    try {
-      setAuditEvents(await listAuditEvents());
-    } catch (loadError) {
-      alert("加载审计事件失败：" + (loadError instanceof Error ? loadError.message : "unknown error"));
-    } finally {
-      setAuditLoading(false);
-    }
-  }
+  		try {
+  			setAuditLoading(true);
+  			setAuditEvents(await listAuditEvents());
+  		} catch (loadAuditEventsError) {
+  			alert("加载失败：" + (loadAuditEventsError instanceof Error ? loadAuditEventsError.message : "unknown error"));
+  		} finally {
+  			setAuditLoading(false);
+  		}
+  	}
+
+  	function filterAuditEvents() {
+  		if (!auditFilter.trim()) return auditEvents;
+  		const needle = auditFilter.toLowerCase();
+  		return auditEvents.filter(
+  			(e) =>
+  				e.action.toLowerCase().includes(needle) ||
+  				(e.actorUsername || e.actorId || "").toLowerCase().includes(needle) ||
+  				(e.resourceType || "").toLowerCase().includes(needle) ||
+  				(e.resourceId || "").toLowerCase().includes(needle) ||
+  				(e.ip || "").toLowerCase().includes(needle)
+  		);
+  	}
 
   async function handlePreviewXray() {
     setXrayError(null);
@@ -1246,6 +1260,20 @@ const [rotatedToken, setRotatedToken] = useState<string | null>(null);
                 <span>刚轮换</span>
               </div>
               <pre>{rotatedToken}</pre>
+              <div className="action-row" style={{ marginTop: "8px" }}>
+                <button
+                  type="button"
+                  className="ghost-button"
+                  onClick={() => {
+                    void navigator.clipboard.writeText(rotatedToken ?? "");
+                  }}
+                >
+                  复制 Token
+                </button>
+                <button type="button" className="ghost-button" onClick={() => setRotatedToken(null)}>
+                  关闭
+                </button>
+              </div>
               <p className="status note">复制保存后即可关闭。旧 token 已失效。</p>
             </div>
           ) : null}
@@ -1585,11 +1613,47 @@ const [rotatedToken, setRotatedToken] = useState<string | null>(null);
             >
               {auditLoading ? "加载..." : "刷新审计事件"}
             </button>
-            <span>{auditEvents.length} 条</span>
+            <button
+              type="button"
+              className="ghost-button"
+              onClick={() => {
+                if (!auditEvents.length) return;
+                const header = "id,action,actor,resourceType,resourceId,ip,createdAt";
+                const filtered = filterAuditEvents();
+                const rows = filtered.map((e) => {
+                  const fields = [e.id, e.action, e.actorUsername || e.actorId, e.resourceType, e.resourceId, e.ip, e.createdAt];
+                  return fields.map((v) => {
+                    const s = String(v ?? "").replace(/"/g, '""');
+                    return `"${s}"`;
+                  }).join(",");
+                });
+                const blob = new Blob([header + "\n" + rows.join("\n")], { type: "text/csv" });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = `harborx-audit-${new Date().toISOString().slice(0, 10)}.csv`;
+                a.click();
+                URL.revokeObjectURL(url);
+              }}
+            >
+              导出 CSV
+            </button>
+            <span>{filterAuditEvents().length} / {auditEvents.length} 条</span>
+          </div>
+          <div className="action-row" style={{ marginBottom: "12px" }}>
+            <label htmlFor="audit-filter">筛选</label>
+            <input
+              id="audit-filter"
+              type="text"
+              placeholder="按 action / 操作人 / 资源类型..."
+              value={auditFilter}
+              onChange={(e) => setAuditFilter(e.target.value)}
+              style={{ flex: 1, minWidth: 0 }}
+            />
           </div>
           <div className="entity-list">
-            {auditEvents.length ? (
-              auditEvents.map((event) => (
+            {filterAuditEvents().length ? (
+              filterAuditEvents().map((event) => (
                 <div className="entity-card" key={event.id}>
                   <div className="entity-head">
                     <strong>{event.action}</strong>

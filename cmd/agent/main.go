@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -73,6 +75,9 @@ func loadConfig() (agentConfig, error) {
 	}
 	if cfg.BaseURL == "" {
 		return agentConfig{}, errors.New("HARBORX_AGENT_BASE_URL is required")
+	}
+	if !strings.HasPrefix(strings.ToLower(cfg.BaseURL), "https://") {
+		log.Printf("WARN: HARBORX_AGENT_BASE_URL must use https:// — agent token will be sent in cleartext over http")
 	}
 	if cfg.Token == "" {
 		return agentConfig{}, errors.New("HARBORX_AGENT_TOKEN is required")
@@ -189,9 +194,9 @@ func runTask(cfg agentConfig, task remoteTask) (string, error) {
 	case "install-nginx":
 		return runCommand(5*time.Minute, "sh", "-lc", packageInstallCommand("nginx"))
 	case "install-warp":
-		return runCommand(10*time.Minute, "sh", "-lc", "curl -fsSL https://raw.githubusercontent.com/fscarmen/warp/main/menu.sh -o /tmp/warp-menu.sh && bash /tmp/warp-menu.sh")
+		return runCommand(10*time.Minute, "sh", "-lc", "curl -fsSL https://raw.githubusercontent.com/fscarmen/warp/main/menu.sh -o /tmp/warp-menu.sh && wc -l /tmp/warp-menu.sh && bash /tmp/warp-menu.sh")
 	case "install-xray":
-		return runCommand(10*time.Minute, "sh", "-lc", "bash -c \"$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)\" @ install")
+		return runCommand(10*time.Minute, "sh", "-lc", "curl -fsSL https://github.com/XTLS/Xray-install/raw/main/install-release.sh -o /tmp/xray-install.sh && bash /tmp/xray-install.sh @ install")
 	case "renew-certificate":
 		return runCommand(5*time.Minute, "sh", "-lc", "command -v certbot >/dev/null && certbot renew --quiet")
 	case "shell-script":
@@ -339,12 +344,71 @@ func syncExternalSubscription(payload map[string]any) (string, error) {
 	if url == "" {
 		return "", errors.New("sync-external-subscription payload.url is required")
 	}
+	if err := validateExternalURL(url); err != nil {
+		return "", err
+	}
 	outputPath := payloadString(payload, "outputPath", "/var/lib/harborx/external-subscription.txt")
 	if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
 		return "", err
 	}
 	command := fmt.Sprintf("curl -fsSL %s -o %s && wc -c %s", shellQuote(url), shellQuote(outputPath), shellQuote(outputPath))
 	return runCommand(2*time.Minute, "sh", "-lc", command)
+}
+
+// validateExternalURL blocks SSRF vectors that would let a remote-server
+// task pull cloud metadata, read local files, or reach internal networks.
+// Only http(s) schemes with a public hostname are accepted.
+func validateExternalURL(url string) error {
+	parsed, err := parseURL(url)
+	if err != nil {
+		return fmt.Errorf("invalid URL: %w", err)
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return fmt.Errorf("url scheme must be http or https, got %q", parsed.Scheme)
+	}
+	host := strings.ToLower(parsed.Hostname())
+	if host == "" {
+		return errors.New("url must contain a hostname")
+	}
+	host = strings.TrimRight(host, ".")
+	if !strings.Contains(host, ".") {
+		return errors.New("url hostname must contain a dot (no bare IPs)")
+	}
+	if isPrivateIP(host) {
+		return errors.New("url hostname must not be a private or link-local IP")
+	}
+	return nil
+}
+
+func parseURL(raw string) (*url.URL, error) {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return nil, err
+	}
+	if u.User != nil {
+		return nil, errors.New("url must not contain credentials")
+	}
+	return u, nil
+}
+
+var privateNetBlocks = []string{
+	"10.", "127.", "169.254.", "172.16.", "172.17.", "172.18.", "172.19.",
+	"172.20.", "172.21.", "172.22.", "172.23.", "172.24.", "172.25.",
+	"172.26.", "172.27.", "172.28.", "172.29.", "172.30.", "172.31.",
+	"192.168.", "0.", "::1", "fc00:", "fd", "fe80:",
+}
+
+func isPrivateIP(hostname string) bool {
+	for _, prefix := range privateNetBlocks {
+		if strings.HasPrefix(hostname, prefix) {
+			return true
+		}
+	}
+	// Double-check via net.ParseIP so dotted-quad forms like 127.1 are caught.
+	if ip := net.ParseIP(hostname); ip != nil {
+		return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast()
+	}
+	return false
 }
 
 func runVPSMaintenance(payload map[string]any) (string, error) {
@@ -362,13 +426,16 @@ func runVPSMaintenance(payload map[string]any) (string, error) {
 func applySecurityPolicy(payload map[string]any) (string, error) {
 	var output strings.Builder
 	if payloadBool(payload, "disablePasswordSSH", false) {
+		if payloadBool(payload, "dryRun", false) {
+			output.WriteString("dry-run: ssh hardening skipped (would write /etc/ssh/sshd_config.d/99-harborx.conf)\n")
+			output.WriteString("security policy evaluated\n")
+			return output.String(), nil
+		}
 		path := "/etc/ssh/sshd_config.d/99-harborx.conf"
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			return output.String(), err
 		}
 		backupPath := ""
-		// Back up any pre-existing hardening file so validation failure can be
-		// rolled back and operators can diff what changed.
 		if existing, err := os.ReadFile(path); err == nil && len(existing) > 0 {
 			backupPath = path + ".bak-" + time.Now().UTC().Format("20060102150405")
 			if err := os.WriteFile(backupPath, existing, 0o644); err != nil {
@@ -379,7 +446,6 @@ func applySecurityPolicy(payload map[string]any) (string, error) {
 		if err := os.WriteFile(path, []byte(hardeningContent), 0o644); err != nil {
 			return output.String(), err
 		}
-		// Validate sshd config before reloading — a bad config would lock us out.
 		testOutput, testErr := runCommand(30*time.Second, "sh", "-lc", "command -v sshd >/dev/null 2>&1 && sshd -t || true")
 		if testErr != nil || strings.Contains(strings.ToLower(testOutput), "bad configuration") {
 			if backupPath != "" {
@@ -388,11 +454,6 @@ func applySecurityPolicy(payload map[string]any) (string, error) {
 				_ = os.Remove(path)
 			}
 			return output.String(), errors.New("sshd config validation failed; rollback attempted")
-		}
-		if payloadBool(payload, "dryRun", false) {
-			output.WriteString("dry-run: ssh hardening file written and validated, reload skipped\n")
-			output.WriteString("security policy evaluated\n")
-			return output.String(), nil
 		}
 		restartOutput, err := runCommand(60*time.Second, "systemctl", "reload", "sshd")
 		output.WriteString(restartOutput)

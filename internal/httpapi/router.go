@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"harborx/internal/features/audit"
@@ -139,7 +140,7 @@ func NewRouter(deps Dependencies) http.Handler {
 				writeError(w, http.StatusInternalServerError, err)
 				return
 			}
-			writeJSON(w, http.StatusOK, items)
+			writeJSON(w, http.StatusOK, limitSlice(items, r.URL.Query().Get("limit")))
 		case http.MethodPost:
 			if !requireAuth(w, r, deps) {
 				return
@@ -219,7 +220,7 @@ func NewRouter(deps Dependencies) http.Handler {
 				writeError(w, http.StatusInternalServerError, err)
 				return
 			}
-			writeJSON(w, http.StatusOK, items)
+			writeJSON(w, http.StatusOK, limitSlice(items, r.URL.Query().Get("limit")))
 		case http.MethodPost:
 			if !requireAuth(w, r, deps) {
 				return
@@ -313,7 +314,7 @@ func NewRouter(deps Dependencies) http.Handler {
 				writeError(w, http.StatusInternalServerError, err)
 				return
 			}
-			writeJSON(w, http.StatusOK, items)
+			writeJSON(w, http.StatusOK, limitSlice(items, r.URL.Query().Get("limit")))
 		case http.MethodPost:
 			if !requireAuth(w, r, deps) {
 				return
@@ -357,6 +358,7 @@ func NewRouter(deps Dependencies) http.Handler {
 				if !requireAuth(w, r, deps) {
 					return
 				}
+				opSub := authenticatedOperator(deps, r.Header.Get("Authorization"))
 				var input subscriptions.CreateInput
 				if err := decodeJSON(r, &input); err != nil {
 					writeError(w, http.StatusBadRequest, err)
@@ -367,6 +369,7 @@ func NewRouter(deps Dependencies) http.Handler {
 					writeError(w, http.StatusBadRequest, err)
 					return
 				}
+				_ = deps.Audit.Record(audit.CreateEntryInput{ActorID: opSub.id, ActorUsername: opSub.username, Action: "subscription.update", ResourceType: "subscription", ResourceID: parts[0], IP: clientIP(r)})
 				writeJSON(w, http.StatusOK, item)
 			case http.MethodDelete:
 				if !requireAuth(w, r, deps) {
@@ -451,11 +454,12 @@ func NewRouter(deps Dependencies) http.Handler {
 				writeError(w, http.StatusInternalServerError, err)
 				return
 			}
-			writeJSON(w, http.StatusOK, items)
+			writeJSON(w, http.StatusOK, limitSlice(items, r.URL.Query().Get("limit")))
 		case http.MethodPost:
 			if !requireAuth(w, r, deps) {
 				return
 			}
+			opPkg := authenticatedOperator(deps, r.Header.Get("Authorization"))
 			var input packages.CreatePackageInput
 			if err := decodeJSON(r, &input); err != nil {
 				writeError(w, http.StatusBadRequest, err)
@@ -466,6 +470,7 @@ func NewRouter(deps Dependencies) http.Handler {
 				writeError(w, http.StatusBadRequest, err)
 				return
 			}
+			_ = deps.Audit.Record(audit.CreateEntryInput{ActorID: opPkg.id, ActorUsername: opPkg.username, Action: "package.create", ResourceType: "package", ResourceID: item.ID, IP: clientIP(r)})
 			writeJSON(w, http.StatusCreated, item)
 		default:
 			writeMethodNotAllowed(w, http.MethodGet, http.MethodPost)
@@ -483,6 +488,7 @@ func NewRouter(deps Dependencies) http.Handler {
 			if !requireAuth(w, r, deps) {
 				return
 			}
+			opPkg := authenticatedOperator(deps, r.Header.Get("Authorization"))
 			var input packages.CreatePackageInput
 			if err := decodeJSON(r, &input); err != nil {
 				writeError(w, http.StatusBadRequest, err)
@@ -493,15 +499,18 @@ func NewRouter(deps Dependencies) http.Handler {
 				writeError(w, http.StatusBadRequest, err)
 				return
 			}
+			_ = deps.Audit.Record(audit.CreateEntryInput{ActorID: opPkg.id, ActorUsername: opPkg.username, Action: "package.update", ResourceType: "package", ResourceID: id, IP: clientIP(r)})
 			writeJSON(w, http.StatusOK, item)
 		case http.MethodDelete:
 			if !requireAuth(w, r, deps) {
 				return
 			}
+			opPkg := authenticatedOperator(deps, r.Header.Get("Authorization"))
 			if err := deps.Packages.DeletePackage(id); err != nil {
 				writeError(w, http.StatusBadRequest, err)
 				return
 			}
+			_ = deps.Audit.Record(audit.CreateEntryInput{ActorID: opPkg.id, ActorUsername: opPkg.username, Action: "package.delete", ResourceType: "package", ResourceID: id, IP: clientIP(r)})
 			w.WriteHeader(http.StatusNoContent)
 		default:
 			writeMethodNotAllowed(w, http.MethodPut, http.MethodDelete)
@@ -516,11 +525,12 @@ func NewRouter(deps Dependencies) http.Handler {
 				writeError(w, http.StatusInternalServerError, err)
 				return
 			}
-			writeJSON(w, http.StatusOK, items)
+			writeJSON(w, http.StatusOK, limitSlice(items, r.URL.Query().Get("limit")))
 		case http.MethodPost:
 			if !requireAuth(w, r, deps) {
 				return
 			}
+			opEnt := authenticatedOperator(deps, r.Header.Get("Authorization"))
 			var input packages.CreateEntitlementInput
 			if err := decodeJSON(r, &input); err != nil {
 				writeError(w, http.StatusBadRequest, err)
@@ -531,6 +541,7 @@ func NewRouter(deps Dependencies) http.Handler {
 				writeError(w, http.StatusBadRequest, err)
 				return
 			}
+			_ = deps.Audit.Record(audit.CreateEntryInput{ActorID: opEnt.id, ActorUsername: opEnt.username, Action: "entitlement.create", ResourceType: "entitlement", ResourceID: item.ID, IP: clientIP(r)})
 			writeJSON(w, http.StatusCreated, item)
 		default:
 			writeMethodNotAllowed(w, http.MethodGet, http.MethodPost)
@@ -548,6 +559,7 @@ func NewRouter(deps Dependencies) http.Handler {
 			if !requireAuth(w, r, deps) {
 				return
 			}
+			opEnt := authenticatedOperator(deps, r.Header.Get("Authorization"))
 			var input packages.CreateEntitlementInput
 			if err := decodeJSON(r, &input); err != nil {
 				writeError(w, http.StatusBadRequest, err)
@@ -558,15 +570,18 @@ func NewRouter(deps Dependencies) http.Handler {
 				writeError(w, http.StatusBadRequest, err)
 				return
 			}
+			_ = deps.Audit.Record(audit.CreateEntryInput{ActorID: opEnt.id, ActorUsername: opEnt.username, Action: "entitlement.update", ResourceType: "entitlement", ResourceID: id, IP: clientIP(r)})
 			writeJSON(w, http.StatusOK, item)
 		case http.MethodDelete:
 			if !requireAuth(w, r, deps) {
 				return
 			}
+			opEnt := authenticatedOperator(deps, r.Header.Get("Authorization"))
 			if err := deps.Packages.DeleteEntitlement(id); err != nil {
 				writeError(w, http.StatusBadRequest, err)
 				return
 			}
+			_ = deps.Audit.Record(audit.CreateEntryInput{ActorID: opEnt.id, ActorUsername: opEnt.username, Action: "entitlement.delete", ResourceType: "entitlement", ResourceID: id, IP: clientIP(r)})
 			w.WriteHeader(http.StatusNoContent)
 		default:
 			writeMethodNotAllowed(w, http.MethodPut, http.MethodDelete)
@@ -585,11 +600,12 @@ func NewRouter(deps Dependencies) http.Handler {
 				writeError(w, http.StatusInternalServerError, err)
 				return
 			}
-			writeJSON(w, http.StatusOK, items)
+			writeJSON(w, http.StatusOK, limitSlice(items, r.URL.Query().Get("limit")))
 		case http.MethodPost:
 			if !requireAuth(w, r, deps) {
 				return
 			}
+			opRule := authenticatedOperator(deps, r.Header.Get("Authorization"))
 			var input rules.CreateRuleSetInput
 			if err := decodeJSON(r, &input); err != nil {
 				writeError(w, http.StatusBadRequest, err)
@@ -600,6 +616,7 @@ func NewRouter(deps Dependencies) http.Handler {
 				writeError(w, http.StatusBadRequest, err)
 				return
 			}
+			_ = deps.Audit.Record(audit.CreateEntryInput{ActorID: opRule.id, ActorUsername: opRule.username, Action: "ruleset.create", ResourceType: "ruleset", ResourceID: item.ID, IP: clientIP(r)})
 			writeJSON(w, http.StatusCreated, item)
 		default:
 			writeMethodNotAllowed(w, http.MethodGet, http.MethodPost)
@@ -630,6 +647,7 @@ func NewRouter(deps Dependencies) http.Handler {
 			if !requireAuth(w, r, deps) {
 				return
 			}
+			opRule := authenticatedOperator(deps, r.Header.Get("Authorization"))
 			var input rules.CreateRuleSetInput
 			if err := decodeJSON(r, &input); err != nil {
 				writeError(w, http.StatusBadRequest, err)
@@ -640,15 +658,18 @@ func NewRouter(deps Dependencies) http.Handler {
 				writeError(w, http.StatusBadRequest, err)
 				return
 			}
+			_ = deps.Audit.Record(audit.CreateEntryInput{ActorID: opRule.id, ActorUsername: opRule.username, Action: "ruleset.update", ResourceType: "ruleset", ResourceID: id, IP: clientIP(r)})
 			writeJSON(w, http.StatusOK, item)
 		case http.MethodDelete:
 			if !requireAuth(w, r, deps) {
 				return
 			}
+			opRule := authenticatedOperator(deps, r.Header.Get("Authorization"))
 			if err := deps.Rules.DeleteRuleSet(id); err != nil {
 				writeError(w, http.StatusBadRequest, err)
 				return
 			}
+			_ = deps.Audit.Record(audit.CreateEntryInput{ActorID: opRule.id, ActorUsername: opRule.username, Action: "ruleset.delete", ResourceType: "ruleset", ResourceID: id, IP: clientIP(r)})
 			w.WriteHeader(http.StatusNoContent)
 		default:
 			writeMethodNotAllowed(w, http.MethodPut, http.MethodDelete)
@@ -663,11 +684,12 @@ func NewRouter(deps Dependencies) http.Handler {
 				writeError(w, http.StatusInternalServerError, err)
 				return
 			}
-			writeJSON(w, http.StatusOK, items)
+			writeJSON(w, http.StatusOK, limitSlice(items, r.URL.Query().Get("limit")))
 		case http.MethodPost:
 			if !requireAuth(w, r, deps) {
 				return
 			}
+			opTpl := authenticatedOperator(deps, r.Header.Get("Authorization"))
 			var input templates.CreateInput
 			if err := decodeJSON(r, &input); err != nil {
 				writeError(w, http.StatusBadRequest, err)
@@ -678,6 +700,7 @@ func NewRouter(deps Dependencies) http.Handler {
 				writeError(w, http.StatusBadRequest, err)
 				return
 			}
+			_ = deps.Audit.Record(audit.CreateEntryInput{ActorID: opTpl.id, ActorUsername: opTpl.username, Action: "template.create", ResourceType: "template", ResourceID: item.ID, IP: clientIP(r)})
 			writeJSON(w, http.StatusCreated, item)
 		default:
 			writeMethodNotAllowed(w, http.MethodGet, http.MethodPost)
@@ -695,6 +718,7 @@ func NewRouter(deps Dependencies) http.Handler {
 			if !requireAuth(w, r, deps) {
 				return
 			}
+			opTpl := authenticatedOperator(deps, r.Header.Get("Authorization"))
 			var input templates.CreateInput
 			if err := decodeJSON(r, &input); err != nil {
 				writeError(w, http.StatusBadRequest, err)
@@ -705,15 +729,18 @@ func NewRouter(deps Dependencies) http.Handler {
 				writeError(w, http.StatusBadRequest, err)
 				return
 			}
+			_ = deps.Audit.Record(audit.CreateEntryInput{ActorID: opTpl.id, ActorUsername: opTpl.username, Action: "template.update", ResourceType: "template", ResourceID: id, IP: clientIP(r)})
 			writeJSON(w, http.StatusOK, item)
 		case http.MethodDelete:
 			if !requireAuth(w, r, deps) {
 				return
 			}
+			opTpl := authenticatedOperator(deps, r.Header.Get("Authorization"))
 			if err := deps.Templates.Delete(id); err != nil {
 				writeError(w, http.StatusBadRequest, err)
 				return
 			}
+			_ = deps.Audit.Record(audit.CreateEntryInput{ActorID: opTpl.id, ActorUsername: opTpl.username, Action: "template.delete", ResourceType: "template", ResourceID: id, IP: clientIP(r)})
 			w.WriteHeader(http.StatusNoContent)
 		default:
 			writeMethodNotAllowed(w, http.MethodPut, http.MethodDelete)
@@ -732,11 +759,12 @@ func NewRouter(deps Dependencies) http.Handler {
 				writeError(w, http.StatusInternalServerError, err)
 				return
 			}
-			writeJSON(w, http.StatusOK, items)
+			writeJSON(w, http.StatusOK, limitSlice(items, r.URL.Query().Get("limit")))
 		case http.MethodPost:
 			if !requireAuth(w, r, deps) {
 				return
 			}
+			opPG := authenticatedOperator(deps, r.Header.Get("Authorization"))
 			var input proxygroups.CreateInput
 			if err := decodeJSON(r, &input); err != nil {
 				writeError(w, http.StatusBadRequest, err)
@@ -747,6 +775,7 @@ func NewRouter(deps Dependencies) http.Handler {
 				writeError(w, http.StatusBadRequest, err)
 				return
 			}
+			_ = deps.Audit.Record(audit.CreateEntryInput{ActorID: opPG.id, ActorUsername: opPG.username, Action: "proxygroup.create", ResourceType: "proxy-group", ResourceID: item.ID, IP: clientIP(r)})
 			writeJSON(w, http.StatusCreated, item)
 		default:
 			writeMethodNotAllowed(w, http.MethodGet, http.MethodPost)
@@ -764,6 +793,7 @@ func NewRouter(deps Dependencies) http.Handler {
 			if !requireAuth(w, r, deps) {
 				return
 			}
+			opPG := authenticatedOperator(deps, r.Header.Get("Authorization"))
 			var input proxygroups.CreateInput
 			if err := decodeJSON(r, &input); err != nil {
 				writeError(w, http.StatusBadRequest, err)
@@ -774,15 +804,18 @@ func NewRouter(deps Dependencies) http.Handler {
 				writeError(w, http.StatusBadRequest, err)
 				return
 			}
+			_ = deps.Audit.Record(audit.CreateEntryInput{ActorID: opPG.id, ActorUsername: opPG.username, Action: "proxygroup.update", ResourceType: "proxy-group", ResourceID: id, IP: clientIP(r)})
 			writeJSON(w, http.StatusOK, item)
 		case http.MethodDelete:
 			if !requireAuth(w, r, deps) {
 				return
 			}
+			opPG := authenticatedOperator(deps, r.Header.Get("Authorization"))
 			if err := deps.ProxyGroups.Delete(id); err != nil {
 				writeError(w, http.StatusBadRequest, err)
 				return
 			}
+			_ = deps.Audit.Record(audit.CreateEntryInput{ActorID: opPG.id, ActorUsername: opPG.username, Action: "proxygroup.delete", ResourceType: "proxy-group", ResourceID: id, IP: clientIP(r)})
 			w.WriteHeader(http.StatusNoContent)
 		default:
 			writeMethodNotAllowed(w, http.MethodPut, http.MethodDelete)
@@ -814,7 +847,7 @@ func NewRouter(deps Dependencies) http.Handler {
 				writeError(w, http.StatusInternalServerError, err)
 				return
 			}
-			writeJSON(w, http.StatusOK, items)
+			writeJSON(w, http.StatusOK, limitSlice(items, r.URL.Query().Get("limit")))
 		case http.MethodPost:
 			if !requireAuth(w, r, deps) {
 				return
@@ -827,11 +860,13 @@ func NewRouter(deps Dependencies) http.Handler {
 				writeError(w, http.StatusBadRequest, err)
 				return
 			}
+			opXray := authenticatedOperator(deps, r.Header.Get("Authorization"))
 			item, err := deps.Xray.SaveSnapshot(input.TargetKind, input.TargetID)
 			if err != nil {
 				writeError(w, http.StatusBadRequest, err)
 				return
 			}
+			_ = deps.Audit.Record(audit.CreateEntryInput{ActorID: opXray.id, ActorUsername: opXray.username, Action: "xray.save-snapshot", ResourceType: "xray-snapshot", ResourceID: item.ID, IP: clientIP(r)})
 			writeJSON(w, http.StatusCreated, item)
 		default:
 			writeMethodNotAllowed(w, http.MethodGet, http.MethodPost)
@@ -862,11 +897,13 @@ func NewRouter(deps Dependencies) http.Handler {
 			if !requireAuth(w, r, deps) {
 				return
 			}
+			opXray := authenticatedOperator(deps, r.Header.Get("Authorization"))
 			item, err := deps.Xray.RestoreSnapshot(parts[0])
 			if err != nil {
 				writeError(w, http.StatusBadRequest, err)
 				return
 			}
+			_ = deps.Audit.Record(audit.CreateEntryInput{ActorID: opXray.id, ActorUsername: opXray.username, Action: "xray.restore-snapshot", ResourceType: "xray-snapshot", ResourceID: parts[0], IP: clientIP(r)})
 			writeJSON(w, http.StatusOK, item)
 			return
 		}
@@ -881,11 +918,12 @@ func NewRouter(deps Dependencies) http.Handler {
 				writeError(w, http.StatusInternalServerError, err)
 				return
 			}
-			writeJSON(w, http.StatusOK, items)
+			writeJSON(w, http.StatusOK, limitSlice(items, r.URL.Query().Get("limit")))
 		case http.MethodPost:
 			if !requireAuth(w, r, deps) {
 				return
 			}
+			opXray := authenticatedOperator(deps, r.Header.Get("Authorization"))
 			var input xray.CreateProfileInput
 			if err := decodeJSON(r, &input); err != nil {
 				writeError(w, http.StatusBadRequest, err)
@@ -896,6 +934,7 @@ func NewRouter(deps Dependencies) http.Handler {
 				writeError(w, http.StatusBadRequest, err)
 				return
 			}
+			_ = deps.Audit.Record(audit.CreateEntryInput{ActorID: opXray.id, ActorUsername: opXray.username, Action: "xray.create-profile", ResourceType: "xray-profile", ResourceID: item.ID, IP: clientIP(r)})
 			writeJSON(w, http.StatusCreated, item)
 		default:
 			writeMethodNotAllowed(w, http.MethodGet, http.MethodPost)
@@ -943,6 +982,7 @@ func NewRouter(deps Dependencies) http.Handler {
 			if !requireAuth(w, r, deps) {
 				return
 			}
+			opXray := authenticatedOperator(deps, r.Header.Get("Authorization"))
 			var input xray.CreateProfileInput
 			if err := decodeJSON(r, &input); err != nil {
 				writeError(w, http.StatusBadRequest, err)
@@ -953,15 +993,18 @@ func NewRouter(deps Dependencies) http.Handler {
 				writeError(w, http.StatusBadRequest, err)
 				return
 			}
+			_ = deps.Audit.Record(audit.CreateEntryInput{ActorID: opXray.id, ActorUsername: opXray.username, Action: "xray.update-profile", ResourceType: "xray-profile", ResourceID: parts[0], IP: clientIP(r)})
 			writeJSON(w, http.StatusOK, item)
 		case http.MethodDelete:
 			if !requireAuth(w, r, deps) {
 				return
 			}
+			opXray := authenticatedOperator(deps, r.Header.Get("Authorization"))
 			if err := deps.Xray.DeleteProfile(parts[0]); err != nil {
 				writeError(w, http.StatusBadRequest, err)
 				return
 			}
+			_ = deps.Audit.Record(audit.CreateEntryInput{ActorID: opXray.id, ActorUsername: opXray.username, Action: "xray.delete-profile", ResourceType: "xray-profile", ResourceID: parts[0], IP: clientIP(r)})
 			w.WriteHeader(http.StatusNoContent)
 		default:
 			writeMethodNotAllowed(w, http.MethodPut, http.MethodDelete)
@@ -980,7 +1023,7 @@ func NewRouter(deps Dependencies) http.Handler {
 				writeError(w, http.StatusInternalServerError, err)
 				return
 			}
-			writeJSON(w, http.StatusOK, items)
+			writeJSON(w, http.StatusOK, limitSlice(items, r.URL.Query().Get("limit")))
 		case http.MethodPost:
 			if !requireAuth(w, r, deps) {
 				return
@@ -1051,11 +1094,12 @@ func NewRouter(deps Dependencies) http.Handler {
 					writeError(w, http.StatusBadRequest, err)
 					return
 				}
-				writeJSON(w, http.StatusOK, items)
+				writeJSON(w, http.StatusOK, limitSlice(items, r.URL.Query().Get("limit")))
 			case http.MethodPost:
 				if !requireAuth(w, r, deps) {
 					return
 				}
+				opRemote := authenticatedOperator(deps, r.Header.Get("Authorization"))
 				var input remote.CreateTaskInput
 				if err := decodeJSON(r, &input); err != nil {
 					writeError(w, http.StatusBadRequest, err)
@@ -1066,6 +1110,7 @@ func NewRouter(deps Dependencies) http.Handler {
 					writeError(w, http.StatusBadRequest, err)
 					return
 				}
+				_ = deps.Audit.Record(audit.CreateEntryInput{ActorID: opRemote.id, ActorUsername: opRemote.username, Action: "remote.create-task", ResourceType: "remote-task", ResourceID: item.ID, Detail: map[string]any{"serverId": parts[0], "taskKind": item.TaskKind}, IP: clientIP(r)})
 				writeJSON(w, http.StatusCreated, item)
 			default:
 				writeMethodNotAllowed(w, http.MethodGet, http.MethodPost)
@@ -1083,7 +1128,7 @@ func NewRouter(deps Dependencies) http.Handler {
 				writeError(w, http.StatusBadRequest, err)
 				return
 			}
-			writeJSON(w, http.StatusOK, items)
+			writeJSON(w, http.StatusOK, limitSlice(items, r.URL.Query().Get("limit")))
 			return
 		}
 
@@ -1097,7 +1142,7 @@ func NewRouter(deps Dependencies) http.Handler {
 				writeError(w, http.StatusBadRequest, err)
 				return
 			}
-			writeJSON(w, http.StatusOK, items)
+			writeJSON(w, http.StatusOK, limitSlice(items, r.URL.Query().Get("limit")))
 			return
 		}
 
@@ -1207,7 +1252,7 @@ func NewRouter(deps Dependencies) http.Handler {
 			writeError(w, http.StatusInternalServerError, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, items)
+		writeJSON(w, http.StatusOK, limitSlice(items, r.URL.Query().Get("limit")))
 	})
 
 	mux.HandleFunc("/api/v1/traffic/samples", func(w http.ResponseWriter, r *http.Request) {
@@ -1218,11 +1263,12 @@ func NewRouter(deps Dependencies) http.Handler {
 				writeError(w, http.StatusInternalServerError, err)
 				return
 			}
-			writeJSON(w, http.StatusOK, items)
+			writeJSON(w, http.StatusOK, limitSlice(items, r.URL.Query().Get("limit")))
 		case http.MethodPost:
 			if !requireAuth(w, r, deps) {
 				return
 			}
+			opTraffic := authenticatedOperator(deps, r.Header.Get("Authorization"))
 			var input traffic.CreateSampleInput
 			if err := decodeJSON(r, &input); err != nil {
 				writeError(w, http.StatusBadRequest, err)
@@ -1233,6 +1279,7 @@ func NewRouter(deps Dependencies) http.Handler {
 				writeError(w, http.StatusBadRequest, err)
 				return
 			}
+			_ = deps.Audit.Record(audit.CreateEntryInput{ActorID: opTraffic.id, ActorUsername: opTraffic.username, Action: "traffic.create-sample", ResourceType: "traffic-sample", ResourceID: item.ID, IP: clientIP(r)})
 			writeJSON(w, http.StatusCreated, item)
 		default:
 			writeMethodNotAllowed(w, http.MethodGet, http.MethodPost)
@@ -1251,7 +1298,7 @@ func NewRouter(deps Dependencies) http.Handler {
 				writeError(w, http.StatusInternalServerError, err)
 				return
 			}
-			writeJSON(w, http.StatusOK, items)
+			writeJSON(w, http.StatusOK, limitSlice(items, r.URL.Query().Get("limit")))
 		case http.MethodPost:
 			if !requireAuth(w, r, deps) {
 				return
@@ -1356,7 +1403,7 @@ func NewRouter(deps Dependencies) http.Handler {
 				writeError(w, http.StatusInternalServerError, err)
 				return
 			}
-			writeJSON(w, http.StatusOK, items)
+			writeJSON(w, http.StatusOK, limitSlice(items, r.URL.Query().Get("limit")))
 		case http.MethodPost:
 			if !requireAuth(w, r, deps) {
 				return
@@ -1425,11 +1472,12 @@ func NewRouter(deps Dependencies) http.Handler {
 				writeError(w, http.StatusInternalServerError, err)
 				return
 			}
-			writeJSON(w, http.StatusOK, items)
+			writeJSON(w, http.StatusOK, limitSlice(items, r.URL.Query().Get("limit")))
 		case http.MethodPost:
 			if !requireAuth(w, r, deps) {
 				return
 			}
+			opDNS := authenticatedOperator(deps, r.Header.Get("Authorization"))
 			var input dns.CreateProviderInput
 			if err := decodeJSON(r, &input); err != nil {
 				writeError(w, http.StatusBadRequest, err)
@@ -1440,6 +1488,7 @@ func NewRouter(deps Dependencies) http.Handler {
 				writeError(w, http.StatusBadRequest, err)
 				return
 			}
+			_ = deps.Audit.Record(audit.CreateEntryInput{ActorID: opDNS.id, ActorUsername: opDNS.username, Action: "dns.create-provider", ResourceType: "dns-provider", ResourceID: item.ID, IP: clientIP(r)})
 			writeJSON(w, http.StatusCreated, item)
 		default:
 			writeMethodNotAllowed(w, http.MethodGet, http.MethodPost)
@@ -1494,11 +1543,12 @@ func NewRouter(deps Dependencies) http.Handler {
 				writeError(w, http.StatusInternalServerError, err)
 				return
 			}
-			writeJSON(w, http.StatusOK, items)
+			writeJSON(w, http.StatusOK, limitSlice(items, r.URL.Query().Get("limit")))
 		case http.MethodPost:
 			if !requireAuth(w, r, deps) {
 				return
 			}
+			opNotify := authenticatedOperator(deps, r.Header.Get("Authorization"))
 			var input notifications.CreateInput
 			if err := decodeJSON(r, &input); err != nil {
 				writeError(w, http.StatusBadRequest, err)
@@ -1509,6 +1559,7 @@ func NewRouter(deps Dependencies) http.Handler {
 				writeError(w, http.StatusBadRequest, err)
 				return
 			}
+			_ = deps.Audit.Record(audit.CreateEntryInput{ActorID: opNotify.id, ActorUsername: opNotify.username, Action: "notification.create-channel", ResourceType: "notification-channel", ResourceID: item.ID, IP: clientIP(r)})
 			writeJSON(w, http.StatusCreated, item)
 		default:
 			writeMethodNotAllowed(w, http.MethodGet, http.MethodPost)
@@ -1526,6 +1577,7 @@ func NewRouter(deps Dependencies) http.Handler {
 			if !requireAuth(w, r, deps) {
 				return
 			}
+			opNotify := authenticatedOperator(deps, r.Header.Get("Authorization"))
 			var input struct {
 				Message string `json:"message"`
 			}
@@ -1537,6 +1589,7 @@ func NewRouter(deps Dependencies) http.Handler {
 				writeError(w, http.StatusBadRequest, err)
 				return
 			}
+			_ = deps.Audit.Record(audit.CreateEntryInput{ActorID: opNotify.id, ActorUsername: opNotify.username, Action: "notification.test-channel", ResourceType: "notification-channel", ResourceID: parts[0], IP: clientIP(r)})
 			writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 			return
 		}
@@ -1566,10 +1619,12 @@ func NewRouter(deps Dependencies) http.Handler {
 			if !requireAuth(w, r, deps) {
 				return
 			}
+			opNotify := authenticatedOperator(deps, r.Header.Get("Authorization"))
 			if err := deps.Notifications.DeleteChannel(id); err != nil {
 				writeError(w, http.StatusBadRequest, err)
 				return
 			}
+			_ = deps.Audit.Record(audit.CreateEntryInput{ActorID: opNotify.id, ActorUsername: opNotify.username, Action: "notification.delete-channel", ResourceType: "notification-channel", ResourceID: id, IP: clientIP(r)})
 			w.WriteHeader(http.StatusNoContent)
 		default:
 			writeMethodNotAllowed(w, http.MethodPut, http.MethodDelete)
@@ -1588,7 +1643,7 @@ func NewRouter(deps Dependencies) http.Handler {
 				writeError(w, http.StatusInternalServerError, err)
 				return
 			}
-			writeJSON(w, http.StatusOK, items)
+			writeJSON(w, http.StatusOK, limitSlice(items, r.URL.Query().Get("limit")))
 		case http.MethodPost:
 			if !requireAuth(w, r, deps) {
 				return
@@ -1664,7 +1719,7 @@ func NewRouter(deps Dependencies) http.Handler {
 			writeError(w, http.StatusInternalServerError, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, items)
+		writeJSON(w, http.StatusOK, limitSlice(items, r.URL.Query().Get("limit")))
 	})
 
 	mux.HandleFunc("/api/v1/system/settings/", func(w http.ResponseWriter, r *http.Request) {
@@ -1705,7 +1760,17 @@ func NewRouter(deps Dependencies) http.Handler {
 
 	mux.HandleFunc("/", frontendHandler(deps.WebDistDir))
 
-	return withCORS(mux)
+	return withCORS(withSecurityHeaders(mux))
+}
+
+func withSecurityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("X-XSS-Protection", "1; mode=block")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		next.ServeHTTP(w, r)
+	})
 }
 
 func frontendHandler(distDir string) http.HandlerFunc {
@@ -1859,6 +1924,26 @@ func decodeJSON(r *http.Request, target any) error {
 func writeMethodNotAllowed(w http.ResponseWriter, methods ...string) {
 	w.Header().Set("Allow", strings.Join(methods, ", "))
 	writeError(w, http.StatusMethodNotAllowed, errors.New("method not allowed"))
+}
+
+// limitSlice caps a result list by the optional ?limit query param so a single
+// List endpoint cannot be used to pull an unbounded number of rows into memory.
+// Default 100, hard cap 500.
+func limitSlice[T any](items []T, rawLimit string) []T {
+	n := 100
+	if rawLimit != "" {
+		parsed, err := strconv.Atoi(rawLimit)
+		if err == nil && parsed > 0 {
+			n = parsed
+		}
+	}
+	if n > 500 {
+		n = 500
+	}
+	if len(items) <= n {
+		return items
+	}
+	return items[:n]
 }
 
 func requireAuth(w http.ResponseWriter, r *http.Request, deps Dependencies) bool {
