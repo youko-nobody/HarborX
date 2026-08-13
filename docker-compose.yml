@@ -1,5 +1,18 @@
+# ──────────────────────────────────────────────
+# HarborX — server + agent
+#
+# Quick start:
+#   cp .env.example .env
+#   docker compose up -d
+#
+# Variables (edit .env):
+#   HARBORX_PORT            — server listen port (default 18080)
+#   HARBORX_ADMIN_PASSWORD  — initial admin password (only used on first run)
+#   HARBORX_CORS_ORIGINS    — comma-separated allowed origins (blank = permissive)
+# ──────────────────────────────────────────────
+
 services:
-  harborx:
+  server:
     build:
       context: .
       dockerfile: Dockerfile
@@ -13,6 +26,36 @@ services:
       HARBORX_DATA_DIR: /app/data
       HARBORX_DB_PATH: /app/data/harborx.sqlite
       HARBORX_WEB_DIST_DIR: /app/web-dist
+      # Optional: restrict cross-origin requests in production
+      # HARBORX_CORS_ORIGINS: https://your-domain.example.com
     volumes:
-      - ./data:/app/data
+      - harborx-data:/app/data
       - ./templates:/app/templates
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:18080/api/v1/bootstrap"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+  # Optional agent — point it at a running HarborX server.
+  # Uncomment and set the env vars below to run the agent as a container.
+  # agent:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile
+  #   container_name: harborx-agent
+  #   restart: unless-stopped
+  #   env_file:
+  #     - .env
+  #   environment:
+  #     HARBORX_AGENT_BASE_URL: https://your-harborx.example.com
+  #     HARBORX_AGENT_TOKEN: "hxa_..."
+  #     HARBORX_AGENT_INTERVAL_SECONDS: 10
+  #     # Only enable on servers you control
+  #     # HARBORX_AGENT_ALLOW_SHELL: "1"
+  #   entrypoint: ["/app/harborx-agent"]
+  #   command: ["--base-url", "$${HARBORX_AGENT_BASE_URL}", "--token", "$${HARBORX_AGENT_TOKEN}", "--interval", "$${HARBORX_AGENT_INTERVAL_SECONDS}"]
+
+volumes:
+  harborx-data:

@@ -1,24 +1,26 @@
 import { useState, type FormEvent, type ReactNode } from "react";
 import {
-  listAgentLogs,
-  listRemoteTaskLogs,
-  listRemoteTasks,
-  previewSubscription,
-  previewXray,
-  getAuthToken,
-  login,
-  setAuthToken,
-  subscriptionDownloadURL,
-  validateRuleSet,
-  type AgentLogRecord,
-  type AuthUser,
-  type RemoteServerEnrollment,
-  type RemoteTaskLogRecord,
-  type RemoteTaskRecord,
-  type RenderedSubscription,
-  type RuleRecord,
-  type RuleSetInput,
-  type XrayPreview,
+	listAgentLogs,
+	listAuditEvents,
+	listRemoteTaskLogs,
+	listRemoteTasks,
+	previewSubscription,
+	previewXray,
+	getAuthToken,
+	login,
+	setAuthToken,
+	subscriptionDownloadURL,
+	rotateSubscriptionToken,
+	validateRuleSet,
+	type AgentLogRecord,
+	type AuthUser,
+	type RemoteServerEnrollment,
+	type RemoteTaskLogRecord,
+	type RemoteTaskRecord,
+	type RenderedSubscription,
+	type RuleRecord,
+	type RuleSetInput,
+	type XrayPreview,
 } from "./api";
 import { useWorkspaceData } from "./useWorkspaceData";
 
@@ -68,6 +70,7 @@ type ConsoleSection =
   | "traffic"
   | "remote"
   | "xray"
+  | "audit"
   | "system";
 
 const consoleNavItems: Array<{ key: ConsoleSection; label: string; helper: string }> = [
@@ -80,6 +83,7 @@ const consoleNavItems: Array<{ key: ConsoleSection; label: string; helper: strin
   { key: "traffic", label: "流量", helper: "采样记录与汇总视图" },
   { key: "remote", label: "远程", helper: "VPS 纳管、任务与日志" },
   { key: "xray", label: "Xray", helper: "预览、快照与运行模式" },
+  { key: "audit", label: "审计", helper: "操作审计事件（90 天保留）" },
   { key: "system", label: "系统", helper: "证书、通知、备份与自动化" },
 ];
 
@@ -241,6 +245,22 @@ export function App() {
   const [trafficRX, setTrafficRX] = useState("0");
   const [trafficTX, setTrafficTX] = useState("0");
   const [opsError, setOpsError] = useState<string | null>(null);
+  const [auditEvents, setAuditEvents] = useState<
+  	Array<{
+  		id: string;
+  		actorId: string;
+  		actorUsername: string;
+  		action: string;
+  		resourceType: string;
+  		resourceId: string;
+  		detail?: Record<string, unknown>;
+  		ip: string;
+  		createdAt: string;
+  	}>
+  >([]);
+  const [auditLoading, setAuditLoading] = useState(false);
+const [rotatingSubscriptionId, setRotatingSubscriptionId] = useState<string | null>(null);
+const [rotatedToken, setRotatedToken] = useState<string | null>(null);
   const [opsResourceKind, setOpsResourceKind] = useState("xray-inbound");
   const [opsResourceName, setOpsResourceName] = useState("VLESS Reality Inbound");
   const [opsRemoteServerId, setOpsRemoteServerId] = useState("");
@@ -453,6 +473,33 @@ export function App() {
       setRenderedSubscription(await previewSubscription(id));
     } catch (previewSubscriptionError) {
       setPreviewError(previewSubscriptionError instanceof Error ? previewSubscriptionError.message : "Failed to render subscription");
+    }
+  }
+
+  async function handleRotateSubscriptionToken(id: string, name: string) {
+    if (!confirm(`确认轮换订阅「${name}」的客户端 token？旧的 token 将立即失效，新 token 只显示一次。`)) {
+      return;
+    }
+    setRotatingSubscriptionId(id);
+    setRotatedToken(null);
+    try {
+      const rotated = await rotateSubscriptionToken(id);
+      setRotatedToken(rotated.accessToken);
+    } catch (rotateError) {
+      alert("轮换失败：" + (rotateError instanceof Error ? rotateError.message : "unknown error"));
+    } finally {
+      setRotatingSubscriptionId(null);
+    }
+  }
+
+  async function handleLoadAuditEvents() {
+    setAuditLoading(true);
+    try {
+      setAuditEvents(await listAuditEvents());
+    } catch (loadError) {
+      alert("加载审计事件失败：" + (loadError instanceof Error ? loadError.message : "unknown error"));
+    } finally {
+      setAuditLoading(false);
     }
   }
 
@@ -1173,9 +1220,16 @@ export function App() {
                     <a className="ghost-link" href={subscriptionDownloadURL(item.id)}>
                       下载
                     </a>
-                  <button type="button" className="ghost-button danger-button" onClick={() => void deleteSubscription(item.id)}>
-                    删除
-                  </button>
+                    <button
+                      type="button"
+                      className="ghost-button"
+                      onClick={() => void handleRotateSubscriptionToken(item.id, item.name)}
+                    >
+                      轮换 Token
+                    </button>
+                    <button type="button" className="ghost-button danger-button" onClick={() => void deleteSubscription(item.id)}>
+                      删除
+                    </button>
                   </div>
                 </div>
               ))
@@ -1185,6 +1239,16 @@ export function App() {
           </div>
 
           {previewError ? <p className="status error">{previewError}</p> : null}
+          {rotatedToken ? (
+            <div className="preview-box">
+              <div className="entity-head">
+                <strong>新客户端 Token（只显示一次）</strong>
+                <span>刚轮换</span>
+              </div>
+              <pre>{rotatedToken}</pre>
+              <p className="status note">复制保存后即可关闭。旧 token 已失效。</p>
+            </div>
+          ) : null}
           {renderedSubscription ? (
             <div className="preview-box">
               <div className="entity-head">
@@ -1503,6 +1567,50 @@ export function App() {
     );
   }
 
+  function renderAuditSection() {
+    return (
+      <section className="page-grid">
+        <article className="section-panel span-2">
+          <SectionHeader
+            kicker="操作审计"
+            title="审计事件"
+            note="登录、用户、节点、订阅、Xray、远程服务器等敏感操作都会记录。保留期 90 天，每次启动自动清理。"
+          />
+          <div className="action-row" style={{ marginBottom: "12px" }}>
+            <button
+              type="button"
+              className="primary-button"
+              onClick={handleLoadAuditEvents}
+              disabled={auditLoading}
+            >
+              {auditLoading ? "加载..." : "刷新审计事件"}
+            </button>
+            <span>{auditEvents.length} 条</span>
+          </div>
+          <div className="entity-list">
+            {auditEvents.length ? (
+              auditEvents.map((event) => (
+                <div className="entity-card" key={event.id}>
+                  <div className="entity-head">
+                    <strong>{event.action}</strong>
+                    <span>{event.createdAt}</span>
+                  </div>
+                  <p>操作人：{event.actorUsername || event.actorId}</p>
+                  {event.resourceType ? (
+                    <p>资源：{event.resourceType} {event.resourceId}</p>
+                  ) : null}
+                  {event.ip ? <p>IP：{event.ip}</p> : null}
+                </div>
+              ))
+            ) : (
+              <EmptyState title="暂无审计事件" note="执行敏感操作（登录、创建用户、轮换订阅 token 等）后这里会出现记录。" />
+            )}
+          </div>
+        </article>
+      </section>
+    );
+  }
+
   function renderXraySection() {
     return (
       <section className="page-grid dashboard-grid">
@@ -1787,6 +1895,8 @@ export function App() {
         return renderRemoteSection();
       case "xray":
         return renderXraySection();
+      case "audit":
+        return renderAuditSection();
       case "system":
         return renderSystemSection();
       default:
